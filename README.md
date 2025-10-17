@@ -4,4 +4,3 @@ L’impact du type d’énergie de chauffage sur la performance énergétique et
 Problématique précise :
 “Les logements chauffés à l’électricité présentent-ils de meilleures performances énergétiques et des émissions de CO₂ plus faibles que ceux utilisant le gaz ou le fioul ?”
 
-NTM Simon
