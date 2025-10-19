@@ -74,20 +74,26 @@ server <- function(input, output) {
         "E" = "#E87511",
         "F" = "#E30613",
         "G" = "#B60000"
+      ),
+      guide = guide_legend(
+        title = "Classe DPE",
+        title.position = "top",    # titre de la légende en haut
+        direction = "vertical",    # colonne verticale
+        ncol = 1                   # 1 colonne
       )) +
       labs(
         title = paste("Répartition des classes DPE pour le chauffage :", input$energie),
         x = "Classe DPE",
-        y = "Proportion (%)",
-        fill = "Classe DPE"
+        y = "Proportion (%)"
       ) +
-      theme_minimal(base_family = "sans") +
+      theme_minimal() +
       theme(
+        legend.position = c(0.95, 0.75),  # position dans le graphique (x, y)
+        legend.justification = c("right", "top"),
+        legend.background = element_rect(fill = alpha("white", 0.5), color = NA),
         plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
         axis.text = element_text(size = 12),
         axis.title = element_text(size = 14, face = "bold"),
-        legend.position = "bottom",
-        legend.title = element_text(size = 12),
         panel.grid.major.x = element_blank()
       ) +
       ylim(0, 100)
