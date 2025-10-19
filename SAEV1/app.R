@@ -81,7 +81,7 @@ server <- function(input, output) {
         y = "Proportion (%)",
         fill = "Classe DPE"
       ) +
-      theme_minimal(base_family = "Poppins") +
+      theme_minimal(base_family = "sans") +
       theme(
         plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
         axis.text = element_text(size = 12),
