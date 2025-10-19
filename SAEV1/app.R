@@ -11,7 +11,7 @@ data <- read.csv("C:/Users/darta/OneDrive/Bureau/IUT/2EME Année/SAE-R/data/data
 ui <- fluidPage(
   theme = bs_theme(
     version = 5,
-    bootswatch = "flatly",    # Thème élégant (essaie aussi "cosmo", "minty", "yeti", "pulse"…)
+    bootswatch = "minty",   
     base_font = font_google("Poppins")
   ),
   
