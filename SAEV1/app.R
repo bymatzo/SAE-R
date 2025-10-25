@@ -28,6 +28,18 @@ ui <- navbarPage(
                  choices = sort(unique(data$type_energie_principale_chauffage)),
                  selected = unique(data$type_energie_principale_chauffage)[1]
                ),
+               selectInput(
+                 inputId = "type_batiment",
+                 label = "Type de bâtiment :",
+                 choices = c("Tous", sort(unique(data$type_batiment))),
+                 selected = "Tous"
+               ),
+               selectInput(
+                 inputId = "periode_construction",
+                 label = "Période de construction :",
+                 choices = c("Tous", sort(unique(data$periode_construction))),
+                 selected = "Tous"
+               ),
                hr(),
                p("Ce graphique affiche la répartition en pourcentage des classes DPE pour le type d’énergie sélectionné.")
              ),
@@ -39,10 +51,30 @@ ui <- navbarPage(
   
   # --- Onglet 2 : Boxplot des émissions CO₂ ---
   tabPanel("🌫️ Émissions de CO₂",
-           fluidPage(
-             h3("Comparaison des émissions de CO₂ selon le type d’énergie principale"),
-             p("Ce graphique montre la distribution des émissions de CO₂ (en kgCO₂/m²/an) selon le type d’énergie utilisée pour le chauffage."),
-             plotOutput("graphique_boxplot", height = "550px")
+           sidebarLayout(
+             sidebarPanel(
+               selectInput(
+                 inputId = "energie_boxplot",
+                 label = "Type d’énergie principale :",
+                 choices = sort(unique(data$type_energie_principale_chauffage)),
+                 selected = unique(data$type_energie_principale_chauffage)[1]
+               ),
+               selectInput(
+                 inputId = "type_batiment_boxplot",
+                 label = "Type de bâtiment :",
+                 choices = c("Tous", sort(unique(data$type_batiment))),
+                 selected = "Tous"
+               ),
+               selectInput(
+                 inputId = "periode_construction_boxplot",
+                 label = "Période de construction :",
+                 choices = c("Tous", sort(unique(data$periode_construction))),
+                 selected = "Tous"
+               )
+             ),
+             mainPanel(
+               plotOutput("graphique_boxplot", height = "550px")
+             )
            )
   ),
   
@@ -50,12 +82,23 @@ ui <- navbarPage(
   tabPanel("🔥 Coût du chauffage",
            sidebarLayout(
              sidebarPanel(
-               h4("⚙️ Options de filtrage"),
                selectInput(
                  inputId = "energie_cout",
                  label = "Type d’énergie principale :",
                  choices = sort(unique(data$type_energie_principale_chauffage)),
                  selected = unique(data$type_energie_principale_chauffage)[1]
+               ),
+               selectInput(
+                 inputId = "type_batiment_cout",
+                 label = "Type de bâtiment :",
+                 choices = c("Tous", sort(unique(data$type_batiment))),
+                 selected = "Tous"
+               ),
+               selectInput(
+                 inputId = "periode_construction_cout",
+                 label = "Période de construction :",
+                 choices = c("Tous", sort(unique(data$periode_construction))),
+                 selected = "Tous"
                ),
                hr(),
                p("Cet histogramme montre la distribution du coût de chauffage (€ / an) pour le type d’énergie sélectionné (avec suppression des 5 % des valeurs les plus élevées).")
@@ -66,7 +109,38 @@ ui <- navbarPage(
            )
   ),
   
-  # --- Onglet 4 : À propos ---
+  # --- Onglet 4 : Nuage de points consommation vs émission ---
+  tabPanel("📈 Conso vs Émission",
+           sidebarLayout(
+             sidebarPanel(
+               selectInput(
+                 inputId = "energie_scatter",
+                 label = "Type d’énergie principale :",
+                 choices = sort(unique(data$type_energie_principale_chauffage)),
+                 selected = unique(data$type_energie_principale_chauffage)[1]
+               ),
+               selectInput(
+                 inputId = "type_batiment_scatter",
+                 label = "Type de bâtiment :",
+                 choices = c("Tous", sort(unique(data$type_batiment))),
+                 selected = "Tous"
+               ),
+               selectInput(
+                 inputId = "periode_construction_scatter",
+                 label = "Période de construction :",
+                 choices = c("Tous", sort(unique(data$periode_construction))),
+                 selected = "Tous"
+               ),
+               hr(),
+               p("Nuage de points : consommation d'énergie (kWh/m²/an) vs émissions de CO₂ (kgCO₂/m²/an) filtré par type d’énergie, type de bâtiment et période de construction.")
+             ),
+             mainPanel(
+               plotOutput("graphique_scatter", height = "550px")
+             )
+           )
+  ),
+  
+  # --- Onglet 5 : À propos ---
   tabPanel("ℹ️ À propos",
            fluidPage(
              h3("À propos de cette application"),
@@ -79,10 +153,17 @@ ui <- navbarPage(
 # --- Serveur ---
 server <- function(input, output) {
   
+  # Fonction pour filtrer selon tous les paramètres
+  filter_data <- function(df, energie_sel, batiment_sel, periode_sel) {
+    df <- df %>% filter(type_energie_principale_chauffage == energie_sel)
+    if(batiment_sel != "Tous") df <- df %>% filter(type_batiment == batiment_sel)
+    if(periode_sel != "Tous") df <- df %>% filter(periode_construction == periode_sel)
+    return(df)
+  }
+  
   # --- Graphique 1 : Répartition DPE ---
   output$graphique_dpe <- renderPlot({
-    df_filtre <- data %>%
-      filter(type_energie_principale_chauffage == input$energie) %>%
+    df_filtre <- filter_data(data, input$energie, input$type_batiment, input$periode_construction) %>%
       count(etiquette_dpe) %>%
       mutate(proportion = n / sum(n) * 100)
     
@@ -116,9 +197,11 @@ server <- function(input, output) {
   
   # --- Graphique 2 : Boxplot des émissions CO₂ ---
   output$graphique_boxplot <- renderPlot({
-    ggplot(data, aes(x = type_energie_principale_chauffage, 
-                     y = emission_ges_5_usages_par_m2,
-                     fill = type_energie_principale_chauffage)) +
+    df_filtre <- filter_data(data, input$energie_boxplot, input$type_batiment_boxplot, input$periode_construction_boxplot)
+    
+    ggplot(df_filtre, aes(x = type_energie_principale_chauffage, 
+                          y = emission_ges_5_usages_par_m2,
+                          fill = type_energie_principale_chauffage)) +
       geom_boxplot(outlier.colour = "red", alpha = 0.7) +
       ylim(0, 130) + 
       labs(
@@ -136,10 +219,9 @@ server <- function(input, output) {
       )
   })
   
-  # --- Graphique 3 : Histogramme coût chauffage (en retirant les 5 % les plus hauts) ---
+  # --- Graphique 3 : Histogramme coût chauffage (filtrage 95%) ---
   output$graphique_histogramme <- renderPlot({
-    df_filtre <- data %>%
-      filter(type_energie_principale_chauffage == input$energie_cout) %>%
+    df_filtre <- filter_data(data, input$energie_cout, input$type_batiment_cout, input$periode_construction_cout) %>%
       filter(!is.na(cout_chauffage) & is.finite(cout_chauffage))
     
     validate(
@@ -147,18 +229,51 @@ server <- function(input, output) {
            paste("⚠️ Aucune donnée disponible pour", input$energie_cout))
     )
     
-    # Calcul du 95e percentile et filtrage des 5% plus grands
     seuil_95 <- quantile(df_filtre$cout_chauffage, 0.95, na.rm = TRUE)
-    df_filtre <- df_filtre %>%
-      filter(cout_chauffage <= seuil_95)
+    df_filtre <- df_filtre %>% filter(cout_chauffage <= seuil_95)
     
     ggplot(df_filtre, aes(x = cout_chauffage)) +
       geom_histogram(bins = 30, fill = "#2E86AB", color = "white", alpha = 0.8) +
       labs(
         title = paste("Répartition du coût de chauffage pour", input$energie_cout,
-                      "(5 % valeurs les plus élevées supprimées)"),
+                      "(5 % valeurs extrêmes supprimées)"),
         x = "Coût du chauffage (€ / an)",
         y = "Nombre de logements"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 14, face = "bold"),
+        axis.text = element_text(size = 12)
+      )
+  })
+  
+  # --- Graphique 4 : Nuage de points conso vs émission (filtrage 95%) ---
+  output$graphique_scatter <- renderPlot({
+    df_filtre <- filter_data(data, input$energie_scatter, input$type_batiment_scatter, input$periode_construction_scatter) %>%
+      filter(!is.na(conso_5_usages_par_m2_ep) & is.finite(conso_5_usages_par_m2_ep)) %>%
+      filter(!is.na(emission_ges_5_usages_par_m2) & is.finite(emission_ges_5_usages_par_m2))
+    
+    validate(
+      need(nrow(df_filtre) > 0,
+           paste("⚠️ Aucune donnée disponible pour", input$energie_scatter))
+    )
+    
+    # Filtrage 95% pour X et Y
+    seuil_conso <- quantile(df_filtre$conso_5_usages_par_m2_ep, 0.95, na.rm = TRUE)
+    seuil_ges <- quantile(df_filtre$emission_ges_5_usages_par_m2, 0.95, na.rm = TRUE)
+    
+    df_filtre <- df_filtre %>%
+      filter(conso_5_usages_par_m2_ep <= seuil_conso,
+             emission_ges_5_usages_par_m2 <= seuil_ges)
+    
+    ggplot(df_filtre, aes(x = conso_5_usages_par_m2_ep, y = emission_ges_5_usages_par_m2)) +
+      geom_point(color = "#E74C3C", alpha = 0.7) +
+      labs(
+        title = paste("Consommation vs Émissions pour", input$energie_scatter,
+                      "(5 % valeurs extrêmes supprimées)"),
+        x = "Consommation d'énergie (kWh/m²/an)",
+        y = "Émissions de CO₂ (kgCO₂/m²/an)"
       ) +
       theme_minimal() +
       theme(
@@ -171,3 +286,4 @@ server <- function(input, output) {
 
 # --- Lancement de l'application ---
 shinyApp(ui = ui, server = server)
+
