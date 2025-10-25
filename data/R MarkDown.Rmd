@@ -1,0 +1,24 @@
+---
+title: "Analyse énergétique"
+author: "Wissem Lamouchi"
+date: "2025-10-25"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2c
+    fig_caption: true
+---
+
+{r setup, include=FALSE}
+# Paramètres globaux pour le document
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# Charger les packages nécessaires
+library(dplyr)
+library(ggplot2)
+library(knitr)
+
+# Donnée du fichier csv, charger à partir du lien csv du GitHub
+
+Data = read.csv("https://raw.githubusercontent.com/bymatzo/SAE-R/refs/heads/main/data/data.csv", sep =",", dec = ".")
+
