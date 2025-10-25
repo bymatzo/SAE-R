@@ -31,10 +31,6 @@ ui <- navbarPage(
                hr(),
                p("Ce graphique affiche la répartition en pourcentage des classes DPE pour le type d’énergie sélectionné.")
              ),
-
-# stat_boxplot ------------------------------------------------------------
-
-             
              mainPanel(
                plotOutput("graphique_dpe", height = "500px")
              )
@@ -50,7 +46,27 @@ ui <- navbarPage(
            )
   ),
   
-  # --- Onglet 3 : À propos ---
+  # --- Onglet 3 : Coût du chauffage (filtrable) ---
+  tabPanel("🔥 Coût du chauffage",
+           sidebarLayout(
+             sidebarPanel(
+               h4("⚙️ Options de filtrage"),
+               selectInput(
+                 inputId = "energie_cout",
+                 label = "Type d’énergie principale :",
+                 choices = sort(unique(data$type_energie_principale_chauffage)),
+                 selected = unique(data$type_energie_principale_chauffage)[1]
+               ),
+               hr(),
+               p("Cet histogramme montre la distribution du coût de chauffage (€ / an) pour le type d’énergie sélectionné (avec suppression des 5 % des valeurs les plus élevées).")
+             ),
+             mainPanel(
+               plotOutput("graphique_histogramme", height = "550px")
+             )
+           )
+  ),
+  
+  # --- Onglet 4 : À propos ---
   tabPanel("ℹ️ À propos",
            fluidPage(
              h3("À propos de cette application"),
@@ -65,7 +81,6 @@ server <- function(input, output) {
   
   # --- Graphique 1 : Répartition DPE ---
   output$graphique_dpe <- renderPlot({
-    
     df_filtre <- data %>%
       filter(type_energie_principale_chauffage == input$energie) %>%
       count(etiquette_dpe) %>%
@@ -81,19 +96,8 @@ server <- function(input, output) {
       geom_text(aes(label = paste0(round(proportion, 1), "%")),
                 vjust = -0.5, size = 5, color = "black", fontface = "bold") +
       scale_fill_manual(values = c(
-        "A" = "#009E3D",
-        "B" = "#6DBE45",
-        "C" = "#FFF200",
-        "D" = "#F7A600",
-        "E" = "#E87511",
-        "F" = "#E30613",
-        "G" = "#B60000"
-      ),
-      guide = guide_legend(
-        title = "Classe DPE",
-        title.position = "top",
-        direction = "vertical",
-        ncol = 1
+        "A" = "#009E3D","B" = "#6DBE45","C" = "#FFF200",
+        "D" = "#F7A600","E" = "#E87511","F" = "#E30613","G" = "#B60000"
       )) +
       labs(
         title = paste("Répartition des classes DPE pour le chauffage :", input$energie),
@@ -102,9 +106,6 @@ server <- function(input, output) {
       ) +
       theme_minimal() +
       theme(
-        legend.position = c(0.95, 0.75),
-        legend.justification = c("right", "top"),
-        legend.background = element_rect(fill = alpha("white", 0.5), color = NA),
         plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
         axis.text = element_text(size = 12),
         axis.title = element_text(size = 14, face = "bold"),
@@ -115,12 +116,11 @@ server <- function(input, output) {
   
   # --- Graphique 2 : Boxplot des émissions CO₂ ---
   output$graphique_boxplot <- renderPlot({
-    
     ggplot(data, aes(x = type_energie_principale_chauffage, 
                      y = emission_ges_5_usages_par_m2,
                      fill = type_energie_principale_chauffage)) +
       geom_boxplot(outlier.colour = "red", alpha = 0.7) +
-      ylim (0, 130) + 
+      ylim(0, 130) + 
       labs(
         title = "Distribution des émissions de CO2 par type d’énergie principale",
         x = "Type d’énergie principale de chauffage",
@@ -135,12 +135,39 @@ server <- function(input, output) {
         panel.grid.major.x = element_blank()
       )
   })
+  
+  # --- Graphique 3 : Histogramme coût chauffage (en retirant les 5 % les plus hauts) ---
+  output$graphique_histogramme <- renderPlot({
+    df_filtre <- data %>%
+      filter(type_energie_principale_chauffage == input$energie_cout) %>%
+      filter(!is.na(cout_chauffage) & is.finite(cout_chauffage))
+    
+    validate(
+      need(nrow(df_filtre) > 0,
+           paste("⚠️ Aucune donnée disponible pour", input$energie_cout))
+    )
+    
+    # Calcul du 95e percentile et filtrage des 5% plus grands
+    seuil_95 <- quantile(df_filtre$cout_chauffage, 0.95, na.rm = TRUE)
+    df_filtre <- df_filtre %>%
+      filter(cout_chauffage <= seuil_95)
+    
+    ggplot(df_filtre, aes(x = cout_chauffage)) +
+      geom_histogram(bins = 30, fill = "#2E86AB", color = "white", alpha = 0.8) +
+      labs(
+        title = paste("Répartition du coût de chauffage pour", input$energie_cout,
+                      "(5 % valeurs les plus élevées supprimées)"),
+        x = "Coût du chauffage (€ / an)",
+        y = "Nombre de logements"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 14, face = "bold"),
+        axis.text = element_text(size = 12)
+      )
+  })
 }
 
 # --- Lancement de l'application ---
 shinyApp(ui = ui, server = server)
-
-
-
-
-
