@@ -54,12 +54,6 @@ ui <- navbarPage(
            sidebarLayout(
              sidebarPanel(
                selectInput(
-                 inputId = "energie_boxplot",
-                 label = "Type d’énergie principale :",
-                 choices = sort(unique(data$type_energie_principale_chauffage)),
-                 selected = unique(data$type_energie_principale_chauffage)[1]
-               ),
-               selectInput(
                  inputId = "type_batiment_boxplot",
                  label = "Type de bâtiment :",
                  choices = c("Tous", sort(unique(data$type_batiment))),
@@ -161,6 +155,13 @@ server <- function(input, output) {
     return(df)
   }
   
+  # Filtrage spécifique pour le boxplot (sans filtre type énergie)
+  filter_data_boxplot <- function(df, batiment_sel, periode_sel) {
+    if(batiment_sel != "Tous") df <- df %>% filter(type_batiment == batiment_sel)
+    if(periode_sel != "Tous") df <- df %>% filter(periode_construction == periode_sel)
+    return(df)
+  }
+  
   # --- Graphique 1 : Répartition DPE ---
   output$graphique_dpe <- renderPlot({
     df_filtre <- filter_data(data, input$energie, input$type_batiment, input$periode_construction) %>%
@@ -195,9 +196,9 @@ server <- function(input, output) {
       ylim(0, 100)
   })
   
-  # --- Graphique 2 : Boxplot des émissions CO₂ ---
+  # --- Graphique 2 : Boxplot des émissions CO₂ (sans filtre énergie) ---
   output$graphique_boxplot <- renderPlot({
-    df_filtre <- filter_data(data, input$energie_boxplot, input$type_batiment_boxplot, input$periode_construction_boxplot)
+    df_filtre <- filter_data_boxplot(data, input$type_batiment_boxplot, input$periode_construction_boxplot)
     
     ggplot(df_filtre, aes(x = type_energie_principale_chauffage, 
                           y = emission_ges_5_usages_par_m2,
@@ -286,4 +287,3 @@ server <- function(input, output) {
 
 # --- Lancement de l'application ---
 shinyApp(ui = ui, server = server)
-
