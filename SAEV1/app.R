@@ -5,10 +5,10 @@ library(dplyr)
 library(bslib)
 
 # --- Chargement des données ---
-data <- read.csv("C:/Users/darta/OneDrive/Bureau/IUT/2EME Année/SAE-R/data/data.csv")
+data = read.csv("https://raw.githubusercontent.com/bymatzo/SAE-R/refs/heads/main/data/data.csv", sep =",", dec = ".")
 
 # --- Interface utilisateur ---
-ui <- navbarPage(
+ui = navbarPage(
   "🌍 Analyse DPE et émissions de CO₂",
   
   theme = bs_theme(
@@ -145,30 +145,30 @@ ui <- navbarPage(
 )
 
 # --- Serveur ---
-server <- function(input, output) {
+server = function(input, output) {
   
   # Fonction pour filtrer selon tous les paramètres
-  filter_data <- function(df, energie_sel, batiment_sel, periode_sel) {
-    df <- df %>% filter(type_energie_principale_chauffage == energie_sel)
-    if(batiment_sel != "Tous") df <- df %>% filter(type_batiment == batiment_sel)
-    if(periode_sel != "Tous") df <- df %>% filter(periode_construction == periode_sel)
+  filter_data = function(df, energie_sel, batiment_sel, periode_sel) {
+    df = df %>% filter(type_energie_principale_chauffage == energie_sel)
+    if(batiment_sel != "Tous") df = df %>% filter(type_batiment == batiment_sel)
+    if(periode_sel != "Tous") df = df %>% filter(periode_construction == periode_sel)
     return(df)
   }
   
   # Filtrage spécifique pour le boxplot (sans filtre type énergie)
-  filter_data_boxplot <- function(df, batiment_sel, periode_sel) {
-    if(batiment_sel != "Tous") df <- df %>% filter(type_batiment == batiment_sel)
-    if(periode_sel != "Tous") df <- df %>% filter(periode_construction == periode_sel)
+  filter_data_boxplot = function(df, batiment_sel, periode_sel) {
+    if(batiment_sel != "Tous") df = df %>% filter(type_batiment == batiment_sel)
+    if(periode_sel != "Tous") df = df %>% filter(periode_construction == periode_sel)
     return(df)
   }
   
   # --- Graphique 1 : Répartition DPE ---
-  output$graphique_dpe <- renderPlot({
-    df_filtre <- filter_data(data, input$energie, input$type_batiment, input$periode_construction) %>%
+  output$graphique_dpe = renderPlot({
+    df_filtre = filter_data(data, input$energie, input$type_batiment, input$periode_construction) %>%
       count(etiquette_dpe) %>%
       mutate(proportion = n / sum(n) * 100)
     
-    df_filtre$etiquette_dpe <- factor(
+    df_filtre$etiquette_dpe = factor(
       df_filtre$etiquette_dpe,
       levels = c("A","B","C","D","E","F","G")
     )
@@ -197,8 +197,8 @@ server <- function(input, output) {
   })
   
   # --- Graphique 2 : Boxplot des émissions CO₂ (sans filtre énergie) ---
-  output$graphique_boxplot <- renderPlot({
-    df_filtre <- filter_data_boxplot(data, input$type_batiment_boxplot, input$periode_construction_boxplot)
+  output$graphique_boxplot = renderPlot({
+    df_filtre = filter_data_boxplot(data, input$type_batiment_boxplot, input$periode_construction_boxplot)
     
     ggplot(df_filtre, aes(x = type_energie_principale_chauffage, 
                           y = emission_ges_5_usages_par_m2,
@@ -221,8 +221,8 @@ server <- function(input, output) {
   })
   
   # --- Graphique 3 : Histogramme coût chauffage (filtrage 95%) ---
-  output$graphique_histogramme <- renderPlot({
-    df_filtre <- filter_data(data, input$energie_cout, input$type_batiment_cout, input$periode_construction_cout) %>%
+  output$graphique_histogramme = renderPlot({
+    df_filtre = filter_data(data, input$energie_cout, input$type_batiment_cout, input$periode_construction_cout) %>%
       filter(!is.na(cout_chauffage) & is.finite(cout_chauffage))
     
     validate(
@@ -230,8 +230,8 @@ server <- function(input, output) {
            paste("⚠️ Aucune donnée disponible pour", input$energie_cout))
     )
     
-    seuil_95 <- quantile(df_filtre$cout_chauffage, 0.95, na.rm = TRUE)
-    df_filtre <- df_filtre %>% filter(cout_chauffage <= seuil_95)
+    seuil_95 = quantile(df_filtre$cout_chauffage, 0.95, na.rm = TRUE)
+    df_filtre = df_filtre %>% filter(cout_chauffage <= seuil_95)
     
     ggplot(df_filtre, aes(x = cout_chauffage)) +
       geom_histogram(bins = 30, fill = "#2E86AB", color = "white", alpha = 0.8) +
@@ -250,8 +250,8 @@ server <- function(input, output) {
   })
   
   # --- Graphique 4 : Nuage de points conso vs émission (filtrage 95%) ---
-  output$graphique_scatter <- renderPlot({
-    df_filtre <- filter_data(data, input$energie_scatter, input$type_batiment_scatter, input$periode_construction_scatter) %>%
+  output$graphique_scatter = renderPlot({
+    df_filtre = filter_data(data, input$energie_scatter, input$type_batiment_scatter, input$periode_construction_scatter) %>%
       filter(!is.na(conso_5_usages_par_m2_ep) & is.finite(conso_5_usages_par_m2_ep)) %>%
       filter(!is.na(emission_ges_5_usages_par_m2) & is.finite(emission_ges_5_usages_par_m2))
     
@@ -261,10 +261,10 @@ server <- function(input, output) {
     )
     
     # Filtrage 95% pour X et Y
-    seuil_conso <- quantile(df_filtre$conso_5_usages_par_m2_ep, 0.95, na.rm = TRUE)
-    seuil_ges <- quantile(df_filtre$emission_ges_5_usages_par_m2, 0.95, na.rm = TRUE)
+    seuil_conso = quantile(df_filtre$conso_5_usages_par_m2_ep, 0.95, na.rm = TRUE)
+    seuil_ges = quantile(df_filtre$emission_ges_5_usages_par_m2, 0.95, na.rm = TRUE)
     
-    df_filtre <- df_filtre %>%
+    df_filtre = df_filtre %>%
       filter(conso_5_usages_par_m2_ep <= seuil_conso,
              emission_ges_5_usages_par_m2 <= seuil_ges)
     
