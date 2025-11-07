@@ -15,7 +15,7 @@ df <- data.frame()
 
 #Boucle sur les code postaux
 for (cp in cp_69){
-  
+ 
   params <- list(
     page = 1,
     size = 10000,
@@ -25,7 +25,7 @@ for (cp in cp_69){
   url_encoded <- modify_url(base_url, query = params)
   response <- GET(url_encoded)
   content = fromJSON(rawToChar(response$content), flatten = FALSE)
-  
+ 
   #Si + de 10 000, boucle sur les années
   if (content$total>10000){
     for (year in years){
@@ -38,7 +38,7 @@ for (cp in cp_69){
       url_encoded <- modify_url(base_url, query = params)
       response <- GET(url_encoded)
       content = fromJSON(rawToChar(response$content), flatten = FALSE)
-      
+     
       #Si + de 10 000, boucle sur les etiquettes
       if (content$total>10000){
         for (etiquette in etiquettes){
@@ -54,13 +54,13 @@ for (cp in cp_69){
           df = rbind(df, content$result)
         }
       }
-      
+     
       else{
         df = rbind(df, content$result)
       }
     }
   }
-  
+ 
   else{
     df = rbind(df, content$result)
   }
@@ -70,4 +70,4 @@ for (cp in cp_69){
 View(df)
 
 # Exporter la DataFrame en fichier CSV
-write.csv(df, "C:/Wissem/IUT ( SD2 )/Projet R Shiny/SAE-R/data/data.csv", row.names = FALSE)
+write.csv(df, "C:/Users/simob/Documents/GitHub/SAE-R/data.csv", row.names = FALSE)
