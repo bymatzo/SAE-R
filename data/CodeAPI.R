@@ -19,9 +19,9 @@ for (cp in cp_69){
   params <- list(
     page = 1,
     size = 10000,
-    select = "type_energie_principale_chauffage,etiquette_dpe,cout_chauffage,periode_construction,surface_habitable_logement,type_batiment,date_etablissement_dpe,conso_5_usages_ep,conso_5_usages_par_m2_ep,emission_ges_5_usages_par_m2,code_postal_ban",
+    select = "type_energie_principale_chauffage,etiquette_dpe,cout_chauffage,periode_construction,surface_habitable_logement,type_batiment,date_etablissement_dpe,conso_5_usages_ep,conso_5_usages_par_m2_ep,emission_ges_5_usages_par_m2,code_postal_ban,coordonnee_cartographique_x_ban,coordonnee_cartographique_y_ban",
     qs = paste("code_postal_ban :", cp)
-  ) 
+  )
   url_encoded <- modify_url(base_url, query = params)
   response <- GET(url_encoded)
   content = fromJSON(rawToChar(response$content), flatten = FALSE)
@@ -32,9 +32,9 @@ for (cp in cp_69){
       params <- list(
         page = 1,
         size = 10000,
-        select = "type_energie_principale_chauffage,etiquette_dpe,cout_chauffage,periode_construction,surface_habitable_logement,type_batiment,date_etablissement_dpe,conso_5_usages_ep,conso_5_usages_par_m2_ep,emission_ges_5_usages_par_m2,code_postal_ban",
+        select = "type_energie_principale_chauffage,etiquette_dpe,cout_chauffage,periode_construction,surface_habitable_logement,type_batiment,date_etablissement_dpe,conso_5_usages_ep,conso_5_usages_par_m2_ep,emission_ges_5_usages_par_m2,code_postal_ban,coordonnee_cartographique_x_ban,coordonnee_cartographique_y_ban",
         qs = paste0("code_postal_ban : ", cp, " AND date_etablissement_dpe : [", year, "-01-01 TO ",year, "-12-31]")
-      ) 
+      )
       url_encoded <- modify_url(base_url, query = params)
       response <- GET(url_encoded)
       content = fromJSON(rawToChar(response$content), flatten = FALSE)
@@ -45,9 +45,9 @@ for (cp in cp_69){
           params <- list(
             page = 1,
             size = 10000,
-            select = "type_energie_principale_chauffage,etiquette_dpe,cout_chauffage,periode_construction,surface_habitable_logement,type_batiment,date_etablissement_dpe,conso_5_usages_ep,conso_5_usages_par_m2_ep,emission_ges_5_usages_par_m2,code_postal_ban",
+            select = "type_energie_principale_chauffage,etiquette_dpe,cout_chauffage,periode_construction,surface_habitable_logement,type_batiment,date_etablissement_dpe,conso_5_usages_ep,conso_5_usages_par_m2_ep,emission_ges_5_usages_par_m2,code_postal_ban,coordonnee_cartographique_x_ban,coordonnee_cartographique_y_ban",
             qs = paste0("code_postal_ban : ", cp, " AND date_etablissement_dpe : [", year, "-01-01 TO ",year, "-12-31] AND etiquette_dpe : ", etiquette)
-          ) 
+          )
           url_encoded <- modify_url(base_url, query = params)
           response <- GET(url_encoded)
           content = fromJSON(rawToChar(response$content), flatten = FALSE)
@@ -57,7 +57,7 @@ for (cp in cp_69){
       
       else{
         df = rbind(df, content$result)
-      } 
+      }
     }
   }
   
@@ -70,4 +70,4 @@ for (cp in cp_69){
 View(df)
 
 # Exporter la DataFrame en fichier CSV
-write.csv(df, "C:/Users/simob/Documents/GitHub/SAE-R/data.csv", row.names = FALSE)
+write.csv(df, "C:/Wissem/IUT ( SD2 )/Projet R Shiny/SAE-R/data/data.csv", row.names = FALSE)
