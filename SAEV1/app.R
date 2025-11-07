@@ -18,112 +18,53 @@ data = read.csv(
   "https://raw.githubusercontent.com/bymatzo/SAE-R/refs/heads/main/data/data.csv",
   sep = ",", dec = "."
 )
-carte_france = st_read(
-  "C:/Wissem/IUT ( SD2 )/Projet R Shiny/SAE-R/SAEV1/communes-100m.geojson",
-  quiet = TRUE
-)
 
-# ============================
-#    PRÉPA DONNÉES CARTE
-# ============================
+# rend numérique (gère factor/texte + virgules)
+to_num <- function(v) {
+  if (is.factor(v)) v <- as.character(v)
+  v = gsub(",", ".", v)
+  suppressWarnings(as.numeric(v))
+}
 
-#Rhône uniquement
-carte_rhone = subset(carte_france, departement == "69")
+# X/Y brutes
+x_raw = to_num(data$coordonnee_cartographique_x_ban)  # Lambert-93 (m)
+y_raw = to_num(data$coordonnee_cartographique_y_ban)
 
-# CRS WGS84 (Leaflet)
-if (!is.na(sf::st_crs(carte_rhone))) {
-  if (sf::st_crs(carte_rhone)$epsg != 4326) {
-    carte_rhone = sf::st_transform(carte_rhone, 4326)
+# lignes valides
+ok0 = is.finite(x_raw) & is.finite(y_raw)
+data_pts = data[ok0, , drop = FALSE]
+
+if (nrow(data_pts) > 0) {
+  # si ce ne sont pas des degrés, on reprojette 2154 -> 4326
+  lon_like = all(abs(x_raw[ok0]) <= 180, na.rm = TRUE)
+  lat_like = all(abs(y_raw[ok0]) <= 90,  na.rm = TRUE)
+  
+  if (lon_like && lat_like) {
+    data_pts$lon = x_raw[ok0]
+    data_pts$lat = y_raw[ok0]
+  } else {
+    pts_sf = sf::st_as_sf(
+      data.frame(x = x_raw[ok0], y = y_raw[ok0]),
+      coords = c("x","y"), crs = 2154
+    )
+    pts_wgs = sf::st_transform(pts_sf, 4326)
+    xy = sf::st_coordinates(pts_wgs)
+    data_pts$lon = xy[,1]
+    data_pts$lat = xy[,2]
   }
 }
 
-#Table d’agrégats par code postal
-dpe69 = data[, c("code_postal_ban", "conso_5_usages_par_m2_ep", "etiquette_dpe")]
-niv_dpe = c("A","B","C","D","E","F","G")
-dpe69$dpe_num = match(dpe69$etiquette_dpe, niv_dpe)
+# DPE lettres -> chiffres (A=1 ... G=7)
+niv = c("A","B","C","D","E","F","G")
+data_pts$dpe_num = match(data_pts$etiquette_dpe, niv)
 
-agg = aggregate(
-  cbind(conso_5_usages_par_m2_ep, dpe_num) ~ code_postal_ban,
-  data = dpe69,
-  FUN = function(x) mean(x, na.rm = TRUE)
-)
-names(agg)[2:3] = c("conso_moy", "dpe_moy")
-
-# === ÉTAPE A : Chercher INSEE pour chaque code postal ===
-
-# Codes postaux présents dans tes moyennes
-cp_list = sort(unique(as.character(agg$code_postal_ban)))
-
-# Petite fonction qui interroge le site officiel pour 1 code postal
-fetch_cp_insee = function(cp) {
-  url = paste0("https://geo.api.gouv.fr/communes?codePostal=", cp,
-               "&fields=nom,code,codesPostaux&format=json")
-  txt = tryCatch(readLines(url, warn = FALSE), error = function(e) NULL)
-  if (is.null(txt)) return(NULL)
-  js  = tryCatch(jsonlite::fromJSON(paste(txt, collapse = "")), error = function(e) NULL)
-  if (is.null(js) || NROW(js) == 0) return(NULL)
-  
-  data.frame(
-    code_postal_ban = rep(cp, nrow(js)),
-    code_insee      = as.character(js$code),
-    nom_commune     = as.character(js$nom),
-    stringsAsFactors = FALSE
-  )
+# centre initial de la vue
+if (nrow(data_pts) > 0) {
+  lng0 = mean(data_pts$lon, na.rm = TRUE)
+  lat0 = mean(data_pts$lat, na.rm = TRUE)
+} else {
+  lng0 = 4.85; lat0 <- 45.75  # fallback : Lyon
 }
-
-# On lance la requête pour tous les codes postaux
-lst = lapply(cp_list, fetch_cp_insee)
-
-# On enlève les éléments vides pour éviter les soucis
-if (length(lst) == 0) {
-  stop("Aucune réponse de l'API. Vérifie ta connexion internet.")
-}
-lst = lst[ !vapply(lst, is.null, TRUE) ]
-
-if (length(lst) == 0) {
-  stop("L'API n'a renvoyé aucun résultat pour tes codes postaux.")
-}
-
-# On empile tous les petits tableaux en un seul
-cp_insee = do.call(rbind, lst)
-cp_insee = unique(cp_insee)
-
-# On détecte le bon nom de colonne INSEE dans la carte (code ou code_insee)
-col_code_insee = if ("code_insee" %in% names(carte_rhone)) "code_insee" else "code"
-
-# On garde seulement les communes qui sont bien dans la carte du Rhône
-codes_insee_rhone = as.character(carte_rhone[[col_code_insee]])
-codes_insee_rhone = codes_insee_rhone[!is.na(codes_insee_rhone) & nzchar(codes_insee_rhone)]
-
-cp_insee = cp_insee[ cp_insee$code_insee %in% codes_insee_rhone, ]
-
-# Si tout a été filtré, on préfère prévenir gentiment
-if (nrow(cp_insee) == 0) {
-  stop("Après filtrage Rhône, la table CP→INSEE est vide. 
-- Vérifie que tes CP sont bien du 69 dans 'agg$code_postal_ban'
-- Vérifie que la carte contient bien les INSEE attendus.")
-}
-
-# === ÉTAPE B : Passer des CP aux communes (INSEE) et fusionner avec la carte ===
-
-# On colle tes moyennes sur les INSEE
-agg_insee = merge(agg, cp_insee, by = "code_postal_ban", all.x = TRUE)
-
-# Regroupement par commune (si plusieurs CP pour la même commune)
-agg_commune = aggregate(
-  cbind(conso_moy, dpe_moy) ~ code_insee,
-  data = agg_insee,
-  FUN  = function(x) mean(x, na.rm = TRUE)
-)
-
-# On renomme la colonne INSEE de la carte si besoin
-if (!("code_insee" %in% names(carte_rhone))) {
-  names(carte_rhone)[names(carte_rhone) == "code"] = "code_insee"
-}
-carte_rhone$code_insee = as.character(carte_rhone$code_insee)
-
-# Nouvelle fusion propre (une valeur par commune)
-donnees_map = merge(carte_rhone, agg_commune, by = "code_insee", all.x = TRUE)
 
 # ============================
 #            UI
@@ -141,7 +82,7 @@ ui = navbarPage(
   tabPanel("Répartition DPE",
            sidebarLayout(
              sidebarPanel(
-               h4("⚙️ Options de filtrage"),
+               h4("Options de filtrage"),
                selectInput(
                  inputId = "energie",
                  label = "Type d’énergie principale :",
@@ -254,19 +195,24 @@ ui = navbarPage(
            )
   ),
   
-  # --- Onglet 5 : Carte  ---
+  # --- Onglet 5 : Carte (NOUVELLE UI) ---
   tabPanel(" Carte",
            sidebarLayout(
              sidebarPanel(
                radioButtons(
-                 inputId = "var_color",
-                 label   = "Variable à afficher :",
-                 choices = c("Consommation moyenne (kWh/m²/an)" = "conso_moy",
-                             "DPE moyen (1=A … 7=G)"           = "dpe_moy"),
-                 selected = "conso_moy"
+                 inputId = "mode_carte",
+                 label   = "Affichage :",
+                 choices = c("Points (coordonnées)" = "points",
+                             "Moyenne par code postal" = "cp"),
+                 selected = "points"
                ),
-               sliderInput("opacity", "Opacité", min = 0.2, max = 1, value = 0.85, step = 0.05),
-               checkboxInput("borders", "Bordures marquées", value = FALSE)
+               radioButtons(
+                 inputId = "mesure_carte",
+                 label   = "Mesure :",
+                 choices = c("Conso moyenne (kWh/m²/an)" = "conso",
+                             "DPE moyen (A=1 … G=7)"   = "dpe"),
+                 selected = "conso"
+               )
              ),
              mainPanel(
                leafletOutput("map_rhone", height = "650px")
@@ -425,10 +371,18 @@ server = function(input, output, session) {
       )
   })
   
-  # ---------- Carte : rendu de base ----------
-  bbox_rhone = sf::st_bbox(donnees_map)
-  lng0 = as.numeric((bbox_rhone$xmin + bbox_rhone$xmax) / 2)
-  lat0 = as.numeric((bbox_rhone$ymin + bbox_rhone$ymax) / 2)
+  # ---------- Carte : Leaflet (NOUVELLE LOGIQUE) ----------
+  
+  # palette simple
+  make_pal = function(values) {
+    rng = range(values, na.rm = TRUE)
+    if (!is.finite(rng[1]) || rng[1] == rng[2]) rng = c(0, 1)
+    leaflet::colorNumeric(
+      palette  = c("#f7fbff", "#6baed6", "#2171b5", "#08306b"),
+      domain   = rng,
+      na.color = "#d9d9d9"
+    )
+  }
   
   output$map_rhone = leaflet::renderLeaflet({
     m = leaflet::leaflet(options = leaflet::leafletOptions(zoomControl = TRUE))
@@ -437,62 +391,112 @@ server = function(input, output, session) {
     m
   })
   
-  # --- Fonction qui crée les couleurs de la carte ---
-  make_pal = function(values) {
-    rng = range(values, na.rm = TRUE)
-    if (!is.finite(rng[1]) || rng[1] == rng[2]) rng = c(0, 1)
-    leaflet::colorNumeric(
-      palette = c("#f7fbff", "#6baed6", "#2171b5", "#08306b"),
-      domain  = rng,
-      na.color = "#d9d9d9"
-    )
-  }
-  # --- Met à jour la carte quand on change un bouton ou un réglage ---
   observe({
-    varname = input$var_color
-    values  = donnees_map[[varname]]
-    pal = make_pal(values)
-    border_color  = if (isTRUE(input$borders)) "#2b2b2b" else "#666666"
-    border_weight = if (isTRUE(input$borders)) 1.2 else 0.5
-    titre_leg = if (identical(varname, "conso_moy")) "kWh/m²/an" else "DPE moyen (1=A…7=G)"
-    commune_col = NA
-    for (cn in c("nom","commune","nom_commune")) {
-      if (cn %in% names(donnees_map)) { commune_col = cn; break }
+    # mesure choisie
+    mesure = input$mesure_carte  # "conso" ou "dpe"
+    
+    # base de travail : points reprojetés
+    df = data_pts
+    
+    # valeur pour couleur / popup
+    if (identical(mesure, "conso")) {
+      tmp = df$conso_5_usages_par_m2_ep
+      if (is.factor(tmp)) tmp <- as.character(tmp)
+      tmp = gsub(",", ".", tmp)
+      df$val = suppressWarnings(as.numeric(tmp))
+      titre_leg = "kWh/m²/an"
+      popup_label = "Conso"
+    } else {
+      df$val = suppressWarnings(as.numeric(df$dpe_num))
+      titre_leg = "DPE moyen (1=A…7=G)"
+      popup_label = "DPE"
     }
-    commune_txt = if (!is.na(commune_col)) as.character(donnees_map[[commune_col]])
-    else as.character(donnees_map$code_postal_ban)
-    rnd = function(v) { y = round(v, 1); y[is.na(y)] = NA; y }
-    labels = paste0(
-      "<b>", commune_txt, "</b>",
-      "<br>Consommation moyenne : ",
-      ifelse(is.na(donnees_map$conso_moy), "NA", paste0(rnd(donnees_map$conso_moy), " kWh/m²/an")),
-      "<br>DPE moyen (1=A…7=G) : ",
-      ifelse(is.na(donnees_map$dpe_moy), "NA", as.character(rnd(donnees_map$dpe_moy)))
-    )
+    
+    # agrégat par code postal si demandé
+    if (identical(input$mode_carte, "cp")) {
+      agg_val = aggregate(val ~ code_postal_ban, data = df, FUN = function(x) mean(x, na.rm = TRUE))
+      agg_lonlat = aggregate(cbind(lon, lat) ~ code_postal_ban, data = df, FUN = function(x) mean(x, na.rm = TRUE))
+      df = merge(agg_val, agg_lonlat, by = "code_postal_ban", all = TRUE)
+      df$popup_cp = as.character(df$code_postal_ban)
+    } else {
+      df$popup_cp = as.character(df$code_postal_ban)
+    }
+    
+    pal = make_pal(df$val)
+    
     m = leaflet::leafletProxy("map_rhone")
-    m = leaflet::clearShapes(m)
+    m = leaflet::clearMarkers(m)
     m = leaflet::clearControls(m)
-    m = leaflet::addPolygons(
-      map  = m,
-      data = donnees_map,
-      fillColor   = pal(values),
-      fillOpacity = input$opacity,
-      color       = border_color,
-      weight      = border_weight,
-      opacity     = 1,
-      smoothFactor = 0.2,
-      highlight = leaflet::highlightOptions(weight = 2, color = "#000000", bringToFront = TRUE),
-      label = lapply(labels, htmltools::HTML),
-      labelOptions = leaflet::labelOptions(textsize = "12px", direction = "auto")
-    )
-    m = leaflet::addLegend(
-      map = m, position = "bottomright",
-      pal = pal, values = values,
-      opacity = 0.9, title = titre_leg,
-      labFormat = leaflet::labelFormat(digits = 1)
-    )
+    
+    ok  = is.finite(df$lon) & is.finite(df$lat)
+    okv = ok & is.finite(df$val)
+    kov = ok & !is.finite(df$val)
+    
+    if (any(okv)) {
+      if (identical(input$mode_carte, "points")) {
+        m = leaflet::addCircleMarkers(
+          map = m,
+          lng = df$lon[okv], lat = df$lat[okv],
+          radius = 2,
+          stroke = FALSE, fillOpacity = 0.8,
+          fillColor = pal(df$val[okv]),
+          popup = paste0("CP : ", df$popup_cp[okv],
+                         "<br>", popup_label, " : ", round(df$val[okv], 1)),
+          clusterOptions = leaflet::markerClusterOptions(
+            maxClusterRadius = 40,
+            spiderfyOnMaxZoom = TRUE,
+            zoomToBoundsOnClick = TRUE
+          )
+        )
+      } else {
+        m <- leaflet::addCircleMarkers(
+          map = m,
+          lng = df$lon[okv], lat = df$lat[okv],
+          radius = 4,
+          stroke = FALSE, fillOpacity = 0.9,
+          fillColor = pal(df$val[okv]),
+          popup = paste0("CP : ", df$popup_cp[okv],
+                         "<br>", popup_label, " : ", round(df$val[okv], 1))
+        )
+      }
+    }
+    
+    if (any(kov)) {
+      if (identical(input$mode_carte, "points")) {
+        m = leaflet::addCircleMarkers(
+          map = m,
+          lng = df$lon[kov], lat = df$lat[kov],
+          radius = 2,
+          stroke = FALSE, fillOpacity = 0.6,
+          fillColor = "#d9d9d9",
+          popup = paste0("CP : ", df$popup_cp[kov], "<br>pas de donnée"),
+          clusterOptions = leaflet::markerClusterOptions(
+            maxClusterRadius = 40,
+            spiderfyOnMaxZoom = TRUE,
+            zoomToBoundsOnClick = TRUE
+          )
+        )
+      } else {
+        m = leaflet::addCircleMarkers(
+          map = m,
+          lng = df$lon[kov], lat = df$lat[kov],
+          radius = 4,
+          stroke = FALSE, fillOpacity = 0.6,
+          fillColor = "#d9d9d9",
+          popup = paste0("CP : ", df$popup_cp[kov], "<br>pas de donnée")
+        )
+      }
+    }
+    
+    if (any(is.finite(df$val))) {
+      m = leaflet::addLegend(
+        map = m, position = "bottomright",
+        pal = pal, values = df$val[is.finite(df$val)],
+        opacity = 0.9, title = titre_leg,
+        labFormat = leaflet::labelFormat(digits = 1)
+      )
+    }
   })
-  
 }
 
 # ============================
