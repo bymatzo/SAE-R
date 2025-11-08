@@ -1,16 +1,77 @@
+# --- Installation des packages ---
+packages = c("shiny", "ggplot2", "dplyr", "bslib", "sf", "leaflet", "jsonlite")
+to_install = setdiff(packages, rownames(installed.packages()))
+if (length(to_install)) install.packages(to_install, dependencies = TRUE)
+invisible(lapply(packages, require, character.only = TRUE))
+
 # --- Packages nécessaires ---
 library(shiny)
 library(ggplot2)
 library(dplyr)
 library(bslib)
+library(sf)
+library(leaflet)
+library(jsonlite)
 
 # --- Chargement des données ---
-data <- read.csv("C:/Users/darta/OneDrive/Bureau/IUT/2EME Année/SAE-R/data/data.csv")
+data = read.csv(
+  "https://raw.githubusercontent.com/bymatzo/SAE-R/refs/heads/main/data/data.csv",
+  sep = ",", dec = "."
+)
 
-# --- Interface utilisateur ---
-ui <- navbarPage(
-  "🌍 Analyse DPE et émissions de CO₂",
+# rend numérique (gère factor/texte + virgules)
+to_num <- function(v) {
+  if (is.factor(v)) v <- as.character(v)
+  v = gsub(",", ".", v)
+  suppressWarnings(as.numeric(v))
+}
+
+# X/Y brutes
+x_raw = to_num(data$coordonnee_cartographique_x_ban)  # Lambert-93 (m)
+y_raw = to_num(data$coordonnee_cartographique_y_ban)
+
+# lignes valides
+ok0 = is.finite(x_raw) & is.finite(y_raw)
+data_pts = data[ok0, , drop = FALSE]
+
+if (nrow(data_pts) > 0) {
+  # si ce ne sont pas des degrés, on reprojette 2154 -> 4326
+  lon_like = all(abs(x_raw[ok0]) <= 180, na.rm = TRUE)
+  lat_like = all(abs(y_raw[ok0]) <= 90,  na.rm = TRUE)
   
+  if (lon_like && lat_like) {
+    data_pts$lon = x_raw[ok0]
+    data_pts$lat = y_raw[ok0]
+  } else {
+    pts_sf = sf::st_as_sf(
+      data.frame(x = x_raw[ok0], y = y_raw[ok0]),
+      coords = c("x","y"), crs = 2154
+    )
+    pts_wgs = sf::st_transform(pts_sf, 4326)
+    xy = sf::st_coordinates(pts_wgs)
+    data_pts$lon = xy[,1]
+    data_pts$lat = xy[,2]
+  }
+}
+
+# DPE lettres -> chiffres (A=1 ... G=7)
+niv = c("A","B","C","D","E","F","G")
+data_pts$dpe_num = match(data_pts$etiquette_dpe, niv)
+
+# centre initial de la vue
+if (nrow(data_pts) > 0) {
+  lng0 = mean(data_pts$lon, na.rm = TRUE)
+  lat0 = mean(data_pts$lat, na.rm = TRUE)
+} else {
+  lng0 = 4.85; lat0 <- 45.75  # fallback : Lyon
+}
+
+# ============================
+#            UI
+# ============================
+
+ui = navbarPage(
+  "Analyse DPE et émissions de CO₂",
   theme = bs_theme(
     version = 5,
     bootswatch = "minty",
@@ -18,10 +79,10 @@ ui <- navbarPage(
   ),
   
   # --- Onglet 1 : Répartition DPE ---
-  tabPanel("📊 Répartition DPE",
+  tabPanel("Répartition DPE",
            sidebarLayout(
              sidebarPanel(
-               h4("⚙️ Options de filtrage"),
+               h4("Options de filtrage"),
                selectInput(
                  inputId = "energie",
                  label = "Type d’énergie principale :",
@@ -50,7 +111,7 @@ ui <- navbarPage(
   ),
   
   # --- Onglet 2 : Boxplot des émissions CO₂ ---
-  tabPanel("🌫️ Émissions de CO₂",
+  tabPanel("Émissions de CO₂",
            sidebarLayout(
              sidebarPanel(
                selectInput(
@@ -73,7 +134,7 @@ ui <- navbarPage(
   ),
   
   # --- Onglet 3 : Coût du chauffage (filtrable) ---
-  tabPanel("🔥 Coût du chauffage",
+  tabPanel("Coût du chauffage",
            sidebarLayout(
              sidebarPanel(
                selectInput(
@@ -104,7 +165,7 @@ ui <- navbarPage(
   ),
   
   # --- Onglet 4 : Nuage de points consommation vs émission ---
-  tabPanel("📈 Conso vs Émission",
+  tabPanel("Conso vs Émission",
            sidebarLayout(
              sidebarPanel(
                selectInput(
@@ -134,7 +195,32 @@ ui <- navbarPage(
            )
   ),
   
-  # --- Onglet 5 : À propos ---
+  # --- Onglet 5 : Carte (NOUVELLE UI) ---
+  tabPanel(" Carte",
+           sidebarLayout(
+             sidebarPanel(
+               radioButtons(
+                 inputId = "mode_carte",
+                 label   = "Affichage :",
+                 choices = c("Points (coordonnées)" = "points",
+                             "Moyenne par code postal" = "cp"),
+                 selected = "points"
+               ),
+               radioButtons(
+                 inputId = "mesure_carte",
+                 label   = "Mesure :",
+                 choices = c("Conso moyenne (kWh/m²/an)" = "conso",
+                             "DPE moyen (A=1 … G=7)"   = "dpe"),
+                 selected = "conso"
+               )
+             ),
+             mainPanel(
+               leafletOutput("map_rhone", height = "650px")
+             )
+           )
+  ),
+  
+  # --- Onglet 6 : À propos ---
   tabPanel("ℹ️ À propos",
            fluidPage(
              h3("À propos de cette application"),
@@ -144,31 +230,33 @@ ui <- navbarPage(
   )
 )
 
-# --- Serveur ---
-server <- function(input, output) {
+# ============================
+#          SERVER
+# ============================
+
+server = function(input, output, session) {
   
-  # Fonction pour filtrer selon tous les paramètres
-  filter_data <- function(df, energie_sel, batiment_sel, periode_sel) {
-    df <- df %>% filter(type_energie_principale_chauffage == energie_sel)
-    if(batiment_sel != "Tous") df <- df %>% filter(type_batiment == batiment_sel)
-    if(periode_sel != "Tous") df <- df %>% filter(periode_construction == periode_sel)
+  # ---------- Fonctions de filtrage (inchangées) ----------
+  filter_data = function(df, energie_sel, batiment_sel, periode_sel) {
+    df = df %>% filter(type_energie_principale_chauffage == energie_sel)
+    if (batiment_sel != "Tous") df = df %>% filter(type_batiment == batiment_sel)
+    if (periode_sel != "Tous") df = df %>% filter(periode_construction == periode_sel)
     return(df)
   }
   
-  # Filtrage spécifique pour le boxplot (sans filtre type énergie)
-  filter_data_boxplot <- function(df, batiment_sel, periode_sel) {
-    if(batiment_sel != "Tous") df <- df %>% filter(type_batiment == batiment_sel)
-    if(periode_sel != "Tous") df <- df %>% filter(periode_construction == periode_sel)
+  filter_data_boxplot = function(df, batiment_sel, periode_sel) {
+    if (batiment_sel != "Tous") df = df %>% filter(type_batiment == batiment_sel)
+    if (periode_sel != "Tous") df = df %>% filter(periode_construction == periode_sel)
     return(df)
   }
   
-  # --- Graphique 1 : Répartition DPE ---
-  output$graphique_dpe <- renderPlot({
-    df_filtre <- filter_data(data, input$energie, input$type_batiment, input$periode_construction) %>%
+  # ---------- Graphique 1  ----------
+  output$graphique_dpe = renderPlot({
+    df_filtre = filter_data(data, input$energie, input$type_batiment, input$periode_construction) %>%
       count(etiquette_dpe) %>%
       mutate(proportion = n / sum(n) * 100)
     
-    df_filtre$etiquette_dpe <- factor(
+    df_filtre$etiquette_dpe = factor(
       df_filtre$etiquette_dpe,
       levels = c("A","B","C","D","E","F","G")
     )
@@ -196,9 +284,9 @@ server <- function(input, output) {
       ylim(0, 100)
   })
   
-  # --- Graphique 2 : Boxplot des émissions CO₂ (sans filtre énergie) ---
-  output$graphique_boxplot <- renderPlot({
-    df_filtre <- filter_data_boxplot(data, input$type_batiment_boxplot, input$periode_construction_boxplot)
+  # ---------- Graphique 2  ----------
+  output$graphique_boxplot = renderPlot({
+    df_filtre = filter_data_boxplot(data, input$type_batiment_boxplot, input$periode_construction_boxplot)
     
     ggplot(df_filtre, aes(x = type_energie_principale_chauffage, 
                           y = emission_ges_5_usages_par_m2,
@@ -220,18 +308,18 @@ server <- function(input, output) {
       )
   })
   
-  # --- Graphique 3 : Histogramme coût chauffage (filtrage 95%) ---
-  output$graphique_histogramme <- renderPlot({
-    df_filtre <- filter_data(data, input$energie_cout, input$type_batiment_cout, input$periode_construction_cout) %>%
+  # ---------- Graphique 3  ----------
+  output$graphique_histogramme = renderPlot({
+    df_filtre = filter_data(data, input$energie_cout, input$type_batiment_cout, input$periode_construction_cout) %>%
       filter(!is.na(cout_chauffage) & is.finite(cout_chauffage))
     
     validate(
       need(nrow(df_filtre) > 0,
-           paste("⚠️ Aucune donnée disponible pour", input$energie_cout))
+           paste("Aucune donnée disponible pour", input$energie_cout))
     )
     
-    seuil_95 <- quantile(df_filtre$cout_chauffage, 0.95, na.rm = TRUE)
-    df_filtre <- df_filtre %>% filter(cout_chauffage <= seuil_95)
+    seuil_95 = quantile(df_filtre$cout_chauffage, 0.95, na.rm = TRUE)
+    df_filtre = df_filtre %>% filter(cout_chauffage <= seuil_95)
     
     ggplot(df_filtre, aes(x = cout_chauffage)) +
       geom_histogram(bins = 30, fill = "#2E86AB", color = "white", alpha = 0.8) +
@@ -249,22 +337,21 @@ server <- function(input, output) {
       )
   })
   
-  # --- Graphique 4 : Nuage de points conso vs émission (filtrage 95%) ---
-  output$graphique_scatter <- renderPlot({
-    df_filtre <- filter_data(data, input$energie_scatter, input$type_batiment_scatter, input$periode_construction_scatter) %>%
+  # ---------- Graphique 4  ----------
+  output$graphique_scatter = renderPlot({
+    df_filtre = filter_data(data, input$energie_scatter, input$type_batiment_scatter, input$periode_construction_scatter) %>%
       filter(!is.na(conso_5_usages_par_m2_ep) & is.finite(conso_5_usages_par_m2_ep)) %>%
       filter(!is.na(emission_ges_5_usages_par_m2) & is.finite(emission_ges_5_usages_par_m2))
     
     validate(
       need(nrow(df_filtre) > 0,
-           paste("⚠️ Aucune donnée disponible pour", input$energie_scatter))
+           paste(" Aucune donnée disponible pour", input$energie_scatter))
     )
     
-    # Filtrage 95% pour X et Y
-    seuil_conso <- quantile(df_filtre$conso_5_usages_par_m2_ep, 0.95, na.rm = TRUE)
-    seuil_ges <- quantile(df_filtre$emission_ges_5_usages_par_m2, 0.95, na.rm = TRUE)
+    seuil_conso = quantile(df_filtre$conso_5_usages_par_m2_ep, 0.95, na.rm = TRUE)
+    seuil_ges   = quantile(df_filtre$emission_ges_5_usages_par_m2, 0.95, na.rm = TRUE)
     
-    df_filtre <- df_filtre %>%
+    df_filtre = df_filtre %>%
       filter(conso_5_usages_par_m2_ep <= seuil_conso,
              emission_ges_5_usages_par_m2 <= seuil_ges)
     
@@ -283,7 +370,137 @@ server <- function(input, output) {
         axis.text = element_text(size = 12)
       )
   })
+  
+  # ---------- Carte : Leaflet (NOUVELLE LOGIQUE) ----------
+  
+  # palette simple
+  make_pal = function(values) {
+    rng = range(values, na.rm = TRUE)
+    if (!is.finite(rng[1]) || rng[1] == rng[2]) rng = c(0, 1)
+    leaflet::colorNumeric(
+      palette  = c("#f7fbff", "#6baed6", "#2171b5", "#08306b"),
+      domain   = rng,
+      na.color = "#d9d9d9"
+    )
+  }
+  
+  output$map_rhone = leaflet::renderLeaflet({
+    m = leaflet::leaflet(options = leaflet::leafletOptions(zoomControl = TRUE))
+    m = leaflet::addProviderTiles(m, providers$CartoDB.Positron)
+    m = leaflet::setView(m, lng = lng0, lat = lat0, zoom = 9)
+    m
+  })
+  
+  observe({
+    # mesure choisie
+    mesure = input$mesure_carte  # "conso" ou "dpe"
+    
+    # base de travail : points reprojetés
+    df = data_pts
+    
+    # valeur pour couleur / popup
+    if (identical(mesure, "conso")) {
+      tmp = df$conso_5_usages_par_m2_ep
+      if (is.factor(tmp)) tmp <- as.character(tmp)
+      tmp = gsub(",", ".", tmp)
+      df$val = suppressWarnings(as.numeric(tmp))
+      titre_leg = "kWh/m²/an"
+      popup_label = "Conso"
+    } else {
+      df$val = suppressWarnings(as.numeric(df$dpe_num))
+      titre_leg = "DPE moyen (1=A…7=G)"
+      popup_label = "DPE"
+    }
+    
+    # agrégat par code postal si demandé
+    if (identical(input$mode_carte, "cp")) {
+      agg_val = aggregate(val ~ code_postal_ban, data = df, FUN = function(x) mean(x, na.rm = TRUE))
+      agg_lonlat = aggregate(cbind(lon, lat) ~ code_postal_ban, data = df, FUN = function(x) mean(x, na.rm = TRUE))
+      df = merge(agg_val, agg_lonlat, by = "code_postal_ban", all = TRUE)
+      df$popup_cp = as.character(df$code_postal_ban)
+    } else {
+      df$popup_cp = as.character(df$code_postal_ban)
+    }
+    
+    pal = make_pal(df$val)
+    
+    m = leaflet::leafletProxy("map_rhone")
+    m = leaflet::clearMarkers(m)
+    m = leaflet::clearControls(m)
+    
+    ok  = is.finite(df$lon) & is.finite(df$lat)
+    okv = ok & is.finite(df$val)
+    kov = ok & !is.finite(df$val)
+    
+    if (any(okv)) {
+      if (identical(input$mode_carte, "points")) {
+        m = leaflet::addCircleMarkers(
+          map = m,
+          lng = df$lon[okv], lat = df$lat[okv],
+          radius = 2,
+          stroke = FALSE, fillOpacity = 0.8,
+          fillColor = pal(df$val[okv]),
+          popup = paste0("CP : ", df$popup_cp[okv],
+                         "<br>", popup_label, " : ", round(df$val[okv], 1)),
+          clusterOptions = leaflet::markerClusterOptions(
+            maxClusterRadius = 40,
+            spiderfyOnMaxZoom = TRUE,
+            zoomToBoundsOnClick = TRUE
+          )
+        )
+      } else {
+        m <- leaflet::addCircleMarkers(
+          map = m,
+          lng = df$lon[okv], lat = df$lat[okv],
+          radius = 4,
+          stroke = FALSE, fillOpacity = 0.9,
+          fillColor = pal(df$val[okv]),
+          popup = paste0("CP : ", df$popup_cp[okv],
+                         "<br>", popup_label, " : ", round(df$val[okv], 1))
+        )
+      }
+    }
+    
+    if (any(kov)) {
+      if (identical(input$mode_carte, "points")) {
+        m = leaflet::addCircleMarkers(
+          map = m,
+          lng = df$lon[kov], lat = df$lat[kov],
+          radius = 2,
+          stroke = FALSE, fillOpacity = 0.6,
+          fillColor = "#d9d9d9",
+          popup = paste0("CP : ", df$popup_cp[kov], "<br>pas de donnée"),
+          clusterOptions = leaflet::markerClusterOptions(
+            maxClusterRadius = 40,
+            spiderfyOnMaxZoom = TRUE,
+            zoomToBoundsOnClick = TRUE
+          )
+        )
+      } else {
+        m = leaflet::addCircleMarkers(
+          map = m,
+          lng = df$lon[kov], lat = df$lat[kov],
+          radius = 4,
+          stroke = FALSE, fillOpacity = 0.6,
+          fillColor = "#d9d9d9",
+          popup = paste0("CP : ", df$popup_cp[kov], "<br>pas de donnée")
+        )
+      }
+    }
+    
+    if (any(is.finite(df$val))) {
+      m = leaflet::addLegend(
+        map = m, position = "bottomright",
+        pal = pal, values = df$val[is.finite(df$val)],
+        opacity = 0.9, title = titre_leg,
+        labFormat = leaflet::labelFormat(digits = 1)
+      )
+    }
+  })
 }
 
-# --- Lancement de l'application ---
+# ============================
+#        LANCEMENT
+# ============================
+
 shinyApp(ui = ui, server = server)
