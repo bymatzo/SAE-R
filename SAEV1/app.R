@@ -19,15 +19,15 @@ data = read.csv(
   sep = ",", dec = "."
 )
 
-# rend numérique (gère factor/texte + virgules)
-to_num <- function(v) {
-  if (is.factor(v)) v <- as.character(v)
+# petite fonction pour convertir proprement en numérique
+to_num = function(v) {
+  if (is.factor(v)) v = as.character(v)
   v = gsub(",", ".", v)
   suppressWarnings(as.numeric(v))
 }
 
-# X/Y brutes
-x_raw = to_num(data$coordonnee_cartographique_x_ban)  # Lambert-93 (m)
+# X/Y brutes pour la carte
+x_raw = to_num(data$coordonnee_cartographique_x_ban)
 y_raw = to_num(data$coordonnee_cartographique_y_ban)
 
 # lignes valides
@@ -63,7 +63,8 @@ if (nrow(data_pts) > 0) {
   lng0 = mean(data_pts$lon, na.rm = TRUE)
   lat0 = mean(data_pts$lat, na.rm = TRUE)
 } else {
-  lng0 = 4.85; lat0 <- 45.75  # fallback : Lyon
+  lng0 = 4.85
+  lat0 = 45.75  
 }
 
 # ============================
@@ -195,7 +196,7 @@ ui = navbarPage(
            )
   ),
   
-  # --- Onglet 5 : Carte (NOUVELLE UI) ---
+  # --- Onglet 5 : Carte  ---
   tabPanel(" Carte",
            sidebarLayout(
              sidebarPanel(
@@ -236,7 +237,7 @@ ui = navbarPage(
 
 server = function(input, output, session) {
   
-  # ---------- Fonctions de filtrage (inchangées) ----------
+  # ---------- Fonctions de filtrage ----------
   filter_data = function(df, energie_sel, batiment_sel, periode_sel) {
     df = df %>% filter(type_energie_principale_chauffage == energie_sel)
     if (batiment_sel != "Tous") df = df %>% filter(type_batiment == batiment_sel)
@@ -250,7 +251,7 @@ server = function(input, output, session) {
     return(df)
   }
   
-  # ---------- Graphique 1  ----------
+  # ---------- Graphique 1 ----------
   output$graphique_dpe = renderPlot({
     df_filtre = filter_data(data, input$energie, input$type_batiment, input$periode_construction) %>%
       count(etiquette_dpe) %>%
@@ -284,7 +285,7 @@ server = function(input, output, session) {
       ylim(0, 100)
   })
   
-  # ---------- Graphique 2  ----------
+  # ---------- Graphique 2 ----------
   output$graphique_boxplot = renderPlot({
     df_filtre = filter_data_boxplot(data, input$type_batiment_boxplot, input$periode_construction_boxplot)
     
@@ -308,20 +309,53 @@ server = function(input, output, session) {
       )
   })
   
-  # ---------- Graphique 3  ----------
+  # ---------- Graphique 3 : Coût du chauffage ----------
   output$graphique_histogramme = renderPlot({
-    df_filtre = filter_data(data, input$energie_cout, input$type_batiment_cout, input$periode_construction_cout) %>%
-      filter(!is.na(cout_chauffage) & is.finite(cout_chauffage))
-    
-    validate(
-      need(nrow(df_filtre) > 0,
-           paste("Aucune donnée disponible pour", input$energie_cout))
+    # filtre sur les choix utilisateur
+    df_filtre = filter_data(
+      data,
+      input$energie_cout,
+      input$type_batiment_cout,
+      input$periode_construction_cout
     )
     
-    seuil_95 = quantile(df_filtre$cout_chauffage, 0.95, na.rm = TRUE)
-    df_filtre = df_filtre %>% filter(cout_chauffage <= seuil_95)
+    # conversion propre en numérique
+    x = df_filtre$cout_chauffage
+    if (is.factor(x)) x = as.character(x)
+    x = gsub(",", ".", x)
+    x = suppressWarnings(as.numeric(x))
     
-    ggplot(df_filtre, aes(x = cout_chauffage)) +
+    # on garde seulement les lignes finies
+    ok = is.finite(x)
+    df_filtre = df_filtre[ok, , drop = FALSE]
+    x = x[ok]
+    
+    if (length(x) == 0) {
+      plot.new()
+      text(0.5, 0.5,
+           paste("Aucune donnée disponible pour", input$energie_cout),
+           cex = 1.2)
+      return()
+    }
+    
+    # seuil 95 %
+    seuil_95 = stats::quantile(x, 0.95, na.rm = TRUE)
+    ok2 = x <= seuil_95 & is.finite(x)
+    
+    df_filtre2 = df_filtre[ok2, , drop = FALSE]
+    x2 = x[ok2]
+    
+    if (length(x2) == 0) {
+      plot.new()
+      text(0.5, 0.5,
+           "Pas de valeurs après filtrage à 95 %",
+           cex = 1.2)
+      return()
+    }
+    
+    df_filtre2$cout_num = x2
+    
+    ggplot(df_filtre2, aes(x = cout_num)) +
       geom_histogram(bins = 30, fill = "#2E86AB", color = "white", alpha = 0.8) +
       labs(
         title = paste("Répartition du coût de chauffage pour", input$energie_cout,
@@ -337,25 +371,60 @@ server = function(input, output, session) {
       )
   })
   
-  # ---------- Graphique 4  ----------
+  # ---------- Graphique 4 : Conso vs Émission ----------
   output$graphique_scatter = renderPlot({
-    df_filtre = filter_data(data, input$energie_scatter, input$type_batiment_scatter, input$periode_construction_scatter) %>%
-      filter(!is.na(conso_5_usages_par_m2_ep) & is.finite(conso_5_usages_par_m2_ep)) %>%
-      filter(!is.na(emission_ges_5_usages_par_m2) & is.finite(emission_ges_5_usages_par_m2))
-    
-    validate(
-      need(nrow(df_filtre) > 0,
-           paste(" Aucune donnée disponible pour", input$energie_scatter))
+    df_filtre = filter_data(
+      data,
+      input$energie_scatter,
+      input$type_batiment_scatter,
+      input$periode_construction_scatter
     )
     
-    seuil_conso = quantile(df_filtre$conso_5_usages_par_m2_ep, 0.95, na.rm = TRUE)
-    seuil_ges   = quantile(df_filtre$emission_ges_5_usages_par_m2, 0.95, na.rm = TRUE)
+    cx = df_filtre$conso_5_usages_par_m2_ep
+    if (is.factor(cx)) cx = as.character(cx)
+    cx = gsub(",", ".", cx)
+    cx = suppressWarnings(as.numeric(cx))
     
-    df_filtre = df_filtre %>%
-      filter(conso_5_usages_par_m2_ep <= seuil_conso,
-             emission_ges_5_usages_par_m2 <= seuil_ges)
+    cy = df_filtre$emission_ges_5_usages_par_m2
+    if (is.factor(cy)) cy = as.character(cy)
+    cy = gsub(",", ".", cy)
+    cy = suppressWarnings(as.numeric(cy))
     
-    ggplot(df_filtre, aes(x = conso_5_usages_par_m2_ep, y = emission_ges_5_usages_par_m2)) +
+    ok = is.finite(cx) & is.finite(cy)
+    df_filtre = df_filtre[ok, , drop = FALSE]
+    cx = cx[ok]
+    cy = cy[ok]
+    
+    if (length(cx) == 0) {
+      plot.new()
+      text(0.5, 0.5,
+           paste("Aucune donnée disponible pour", input$energie_scatter),
+           cex = 1.2)
+      return()
+    }
+    
+    seuil_conso = stats::quantile(cx, 0.95, na.rm = TRUE)
+    seuil_ges   = stats::quantile(cy, 0.95, na.rm = TRUE)
+    
+    ok2 = (cx <= seuil_conso) & (cy <= seuil_ges) &
+      is.finite(cx) & is.finite(cy)
+    
+    df_filtre2 = df_filtre[ok2, , drop = FALSE]
+    cx2 = cx[ok2]
+    cy2 = cy[ok2]
+    
+    if (length(cx2) == 0) {
+      plot.new()
+      text(0.5, 0.5,
+           "Pas de points après filtrage à 95 %",
+           cex = 1.2)
+      return()
+    }
+    
+    df_filtre2$conso_num = cx2
+    df_filtre2$ges_num   = cy2
+    
+    ggplot(df_filtre2, aes(x = conso_num, y = ges_num)) +
       geom_point(color = "#E74C3C", alpha = 0.7) +
       labs(
         title = paste("Consommation vs Émissions pour", input$energie_scatter,
@@ -371,9 +440,8 @@ server = function(input, output, session) {
       )
   })
   
-  # ---------- Carte : Leaflet (NOUVELLE LOGIQUE) ----------
+  # ---------- Carte : Leaflet ----------
   
-  # palette simple
   make_pal = function(values) {
     rng = range(values, na.rm = TRUE)
     if (!is.finite(rng[1]) || rng[1] == rng[2]) rng = c(0, 1)
@@ -392,16 +460,12 @@ server = function(input, output, session) {
   })
   
   observe({
-    # mesure choisie
     mesure = input$mesure_carte  # "conso" ou "dpe"
-    
-    # base de travail : points reprojetés
     df = data_pts
     
-    # valeur pour couleur / popup
     if (identical(mesure, "conso")) {
       tmp = df$conso_5_usages_par_m2_ep
-      if (is.factor(tmp)) tmp <- as.character(tmp)
+      if (is.factor(tmp)) tmp = as.character(tmp)
       tmp = gsub(",", ".", tmp)
       df$val = suppressWarnings(as.numeric(tmp))
       titre_leg = "kWh/m²/an"
@@ -412,7 +476,6 @@ server = function(input, output, session) {
       popup_label = "DPE"
     }
     
-    # agrégat par code postal si demandé
     if (identical(input$mode_carte, "cp")) {
       agg_val = aggregate(val ~ code_postal_ban, data = df, FUN = function(x) mean(x, na.rm = TRUE))
       agg_lonlat = aggregate(cbind(lon, lat) ~ code_postal_ban, data = df, FUN = function(x) mean(x, na.rm = TRUE))
@@ -449,7 +512,7 @@ server = function(input, output, session) {
           )
         )
       } else {
-        m <- leaflet::addCircleMarkers(
+        m = leaflet::addCircleMarkers(
           map = m,
           lng = df$lon[okv], lat = df$lat[okv],
           radius = 4,
