@@ -2,7 +2,7 @@
 
 L’impact du type d’énergie de chauffage sur la performance énergétique et les émissions de CO₂
 Problématique précise :
-“Les logements du département du Rhône chauffés à l’électricité présentent-ils de meilleures performances énergétiques et des émissions de CO₂ plus faibles que ceux utilisant le gaz ou le fioul ?”
+“Quel est l'impact du type d'énérgie des logements du département du Rhône sur leurs performances énergétiques et leurs émissions de CO₂ ?”
 
 
 # ✅ Cahier des charges – Projet R Shiny Enedis / GreenTech Solutions
