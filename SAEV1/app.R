@@ -202,7 +202,7 @@ ui = navbarPage(
              )
            )
   ),
-  
+   
   # --- Onglet 3 : Coût du chauffage ---
   tabPanel("Coût du chauffage",
            sidebarLayout(
@@ -577,7 +577,7 @@ server = function(input, output, session) {
                        df[, c("type_energie_principale_chauffage","type_batiment","periode_construction", input$var_x, input$var_y)]
                      }, filename = "scatter_data.csv")
   
-  output$kpi_corr <- renderUI({HTML(paste("Corrélation : <b>", correlation_scatter(), "</b>"))})
+  output$kpi_corr = renderUI({HTML(paste("Corrélation : <b>", correlation_scatter(), "</b>"))})
 
   # --- Carte ---
   
