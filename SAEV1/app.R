@@ -3,7 +3,7 @@
 # ========
 
 # --- Installation des packages ---
-packages = c("shiny", "ggplot2", "dplyr", "bslib", "sf", "leaflet", "jsonlite", "httr", "readr")
+packages = c("shiny", "ggplot2", "dplyr", "bslib", "sf", "leaflet", "jsonlite", "httr", "readr", "shinyauthr", "shinyjs")
 to_install = setdiff(packages, rownames(installed.packages()))
 if (length(to_install)) install.packages(to_install, dependencies = TRUE)
 invisible(lapply(packages, require, character.only = TRUE))
@@ -18,6 +18,8 @@ library(leaflet)
 library(jsonlite)
 library(httr)
 library(readr)
+library(shinyauthr)
+library(shinyjs)
 
 # =======
 # MODULES
@@ -124,230 +126,26 @@ periodes = sort(unique(data$periode_construction))
 periodes = c(periodes[grepl("^avant", periodes, ignore.case = TRUE)],
               periodes[!grepl("^avant", periodes, ignore.case = TRUE)])
 
+# Table des utilisateurs
+user_base <- data.frame(
+  user = "Moi",
+  password = "MotDePasse123",
+  name = "Utilisateur"
+)
 
 # ==
 # UI
 # ==
 
-ui = navbarPage(
-  "Analyse DPE et émissions de CO2",
+ui = fluidPage(
+  useShinyjs(),
   theme = bs_theme(
     version = 5,
     bootswatch = "minty",
     base_font = font_google("Poppins")
   ),
-  
-  # --- Onglet 1 : Répartition DPE ---
-  tabPanel("Répartition DPE",
-           sidebarLayout(
-             sidebarPanel(
-               h4("Options de filtrage"),
-               selectInput(
-                 inputId = "energie",
-                 label = "Type d’énergie principale :",
-                 choices = sort(unique(data$type_energie_principale_chauffage)),
-                 selected = unique(data$type_energie_principale_chauffage)[1]
-               ),
-               selectInput(
-                 inputId = "type_batiment",
-                 label = "Type de bâtiment :",
-                 choices = c("Tous", sort(unique(data$type_batiment))),
-                 selected = "Tous"
-               ),
-               selectInput(
-                 inputId = "periode_construction",
-                 label = "Période de construction :",
-                 choices = c("Tous", periodes),
-                 selected = "Tous"
-               ),
-               checkboxGroupInput(
-                 inputId = "dpe_filtre",
-                 label = "Étiquettes DPE à afficher :",
-                 choices = c("A","B","C","D","E","F","G"),
-                 selected = c("A","B","C","D","E","F","G")
-               ),
-               hr(),
-               p("Ce graphique affiche la répartition en pourcentage des classes DPE pour le type d’énergie sélectionné.")
-             ),
-             mainPanel(
-               plotOutput("graphique_dpe", height = "500px"),
-               downloadPlotUI("dl_dpe"),
-               downloadDataUI("dl_dpe_data")
-             )
-           )
-  ),
-  
-  # --- Onglet 2 : Boxplot des émissions CO2 ---
-  tabPanel("Émissions de CO2",
-           sidebarLayout(
-             sidebarPanel(
-               selectInput(
-                 inputId = "type_batiment_boxplot",
-                 label = "Type de bâtiment :",
-                 choices = c("Tous", sort(unique(data$type_batiment))),
-                 selected = "Tous"
-               ),
-               selectInput(
-                 inputId = "periode_construction_boxplot",
-                 label = "Période de construction :",
-                 choices = c("Tous", periodes),
-                 selected = "Tous"
-               ),
-               hr(),
-               uiOutput("kpi_moy_co2"),
-               uiOutput("kpi_med_co2"),
-             ),
-             mainPanel(
-               plotOutput("graphique_boxplot", height = "550px"),
-               downloadPlotUI("dl_boxplot"),
-               downloadDataUI("dl_boxplot_data")
-             )
-           )
-  ),
-   
-  # --- Onglet 3 : Coût du chauffage ---
-  tabPanel("Coût du chauffage",
-           sidebarLayout(
-             sidebarPanel(
-               selectInput(
-                 inputId = "energie_cout",
-                 label = "Type d’énergie principale :",
-                 choices = sort(unique(data$type_energie_principale_chauffage)),
-                 selected = unique(data$type_energie_principale_chauffage)[1]
-               ),
-               selectInput(
-                 inputId = "type_batiment_cout",
-                 label = "Type de bâtiment :",
-                 choices = c("Tous", sort(unique(data$type_batiment))),
-                 selected = "Tous"
-               ),
-               selectInput(
-                 inputId = "periode_construction_cout",
-                 label = "Période de construction :",
-                 choices = c("Tous", periodes),
-                 selected = "Tous"
-               ),
-               sliderInput(
-                 "filtre_cout_max",
-                 "Limiter le coût du chauffage :",
-                 min = 0,
-                 max = 10000,
-                 value = 10000
-               ),
-               hr(),
-               uiOutput("kpi_moy"),
-               uiOutput("kpi_med"),
-               hr(),
-               p("Cet histogramme montre la distribution du coût de chauffage (€ / an) pour le type d’énergie sélectionné (avec suppression des 5 % des valeurs les plus élevées).")
-             ),
-             mainPanel(
-               plotOutput("graphique_histogramme", height = "550px"),
-               downloadPlotUI("dl_histogramme"),
-               downloadDataUI("dl_histogramme_data")
-             )
-           )
-  ),
-  
-  # --- Onglet 4 : Nuage de points consommation vs émission ---
-  tabPanel("Conso vs Émission",
-           sidebarLayout(
-             sidebarPanel(
-               selectInput(
-                 "var_x",
-                 "Variable X :",
-                 choices = c(
-                   "Consommation (kWh/m²/an)" = "conso_5_usages_par_m2_ep",
-                   "Émissions CO2 (kgCO2/m²/an)" = "emission_ges_5_usages_par_m2",
-                   "Surface habitable" = "surface_habitable_logement"
-                 ),
-                 selected = "conso_5_usages_par_m2_ep"
-               ),
-               selectInput(
-                 "var_y",
-                 "Variable Y :",
-                 choices = c(
-                   "Émissions CO2 (kgCO2/m²/an)" = "emission_ges_5_usages_par_m2",
-                   "Consommation (kWh/m²/an)" = "conso_5_usages_par_m2_ep",
-                   "Surface habitable" = "surface_habitable_logement"
-                 ),
-                 selected = "emission_ges_5_usages_par_m2"
-               ),
-               hr(),
-               selectInput(
-                 inputId = "energie_scatter",
-                 label = "Type d’énergie principale :",
-                 choices = sort(unique(data$type_energie_principale_chauffage)),
-                 selected = unique(data$type_energie_principale_chauffage)[1]
-               ),
-               selectInput(
-                 inputId = "type_batiment_scatter",
-                 label = "Type de bâtiment :",
-                 choices = c("Tous", sort(unique(data$type_batiment))),
-                 selected = "Tous"
-               ),
-               selectInput(
-                 inputId = "periode_construction_scatter",
-                 label = "Période de construction :",
-                 choices = c("Tous", periodes),
-                 selected = "Tous"
-               ),
-               hr(),
-               uiOutput("kpi_corr"),
-               hr(),
-               p("Nuage de points : consommation d'énergie (kWh/m²/an) vs émissions de CO2 (kgCO2/m²/an) filtré par type d’énergie, type de bâtiment et période de construction.")
-             ),
-             mainPanel(
-               plotOutput("graphique_scatter", height = "550px"),
-               downloadPlotUI("dl_scatter"),
-               downloadDataUI("dl_scatter_data")
-             )
-           )
-  ),
-  
-  # --- Onglet 5 : Carte  ---
-  tabPanel(" Carte",
-           sidebarLayout(
-             sidebarPanel(
-               radioButtons(
-                 inputId = "mode_carte",
-                 label   = "Affichage :",
-                 choices = c("Points (coordonnées)" = "points",
-                             "Moyenne par code postal" = "cp"),
-                 selected = "points"
-               ),
-               radioButtons(
-                 inputId = "mesure_carte",
-                 label   = "Mesure :",
-                 choices = c("Conso moyenne (kWh/m²/an)" = "conso",
-                             "DPE moyen (A=1 … G=7)"   = "dpe"),
-                 selected = "conso"
-               )
-             ),
-             mainPanel(
-               leafletOutput("map_rhone", height = "650px")
-             )
-           )
-  ),
-  
-  # --- Onglet 6 : A propos ---
-  tabPanel("A propos",
-           fluidPage(
-             h3("À propos de cette application"),
-             p("Cette application Shiny permet d’analyser les performances énergétiques (DPE) et les émissions de CO2 des logements selon le type d’énergie de chauffage."),
-             p("Réalisée avec ", strong("R Shiny"), " et ", strong("ggplot2"), ".")
-           )
-  ),
-  
-  # --- Onglet 7 : Paramètres ---
-  tabPanel("Paramètres", 
-           fluidPage(
-             h3("Paramètres"),
-             actionButton("update_data_btn", "Actualiser les données", class = "btn btn-warning"),
-             br(), br(),
-             textOutput("update_loading", container = span),
-             verbatimTextOutput("update_log")
-           )
-  )
+  shinyauthr::loginUI("login"),
+  uiOutput("appUI")
 )
 
 # ======
@@ -355,6 +153,241 @@ ui = navbarPage(
 # ======
 
 server = function(input, output, session) {
+  
+  #=============
+  #"FAUX" SERVER
+  #=============
+  
+  credentials = shinyauthr::loginServer(
+    id = "login",
+    data = user_base,
+    user_col = user,
+    pwd_col = password
+  )
+  
+  output$appUI = renderUI({
+    req(credentials()$user_auth)
+    navbarPage(
+      "Analyse DPE et émissions de CO2",
+      # --- Onglet 1 : Répartition DPE ---
+      tabPanel("Répartition DPE",
+               sidebarLayout(
+                 sidebarPanel(
+                   h4("Options de filtrage"),
+                   selectInput(
+                     inputId = "energie",
+                     label = "Type d’énergie principale :",
+                     choices = sort(unique(data$type_energie_principale_chauffage)),
+                     selected = unique(data$type_energie_principale_chauffage)[1]
+                   ),
+                   selectInput(
+                     inputId = "type_batiment",
+                     label = "Type de bâtiment :",
+                     choices = c("Tous", sort(unique(data$type_batiment))),
+                     selected = "Tous"
+                   ),
+                   selectInput(
+                     inputId = "periode_construction",
+                     label = "Période de construction :",
+                     choices = c("Tous", periodes),
+                     selected = "Tous"
+                   ),
+                   checkboxGroupInput(
+                     inputId = "dpe_filtre",
+                     label = "Étiquettes DPE à afficher :",
+                     choices = c("A","B","C","D","E","F","G"),
+                     selected = c("A","B","C","D","E","F","G")
+                   ),
+                   hr(),
+                   p("Ce graphique affiche la répartition en pourcentage des classes DPE pour le type d’énergie sélectionné.")
+                 ),
+                 mainPanel(
+                   plotOutput("graphique_dpe", height = "500px"),
+                   downloadPlotUI("dl_dpe"),
+                   downloadDataUI("dl_dpe_data")
+                 )
+               )
+      ),
+      
+      # --- Onglet 2 : Boxplot des émissions CO2 ---
+      tabPanel("Émissions de CO2",
+               sidebarLayout(
+                 sidebarPanel(
+                   selectInput(
+                     inputId = "type_batiment_boxplot",
+                     label = "Type de bâtiment :",
+                     choices = c("Tous", sort(unique(data$type_batiment))),
+                     selected = "Tous"
+                   ),
+                   selectInput(
+                     inputId = "periode_construction_boxplot",
+                     label = "Période de construction :",
+                     choices = c("Tous", periodes),
+                     selected = "Tous"
+                   ),
+                   hr(),
+                   uiOutput("kpi_moy_co2"),
+                   uiOutput("kpi_med_co2"),
+                 ),
+                 mainPanel(
+                   plotOutput("graphique_boxplot", height = "550px"),
+                   downloadPlotUI("dl_boxplot"),
+                   downloadDataUI("dl_boxplot_data")
+                 )
+               )
+      ),
+      
+      # --- Onglet 3 : Coût du chauffage ---
+      tabPanel("Coût du chauffage",
+               sidebarLayout(
+                 sidebarPanel(
+                   selectInput(
+                     inputId = "energie_cout",
+                     label = "Type d’énergie principale :",
+                     choices = sort(unique(data$type_energie_principale_chauffage)),
+                     selected = unique(data$type_energie_principale_chauffage)[1]
+                   ),
+                   selectInput(
+                     inputId = "type_batiment_cout",
+                     label = "Type de bâtiment :",
+                     choices = c("Tous", sort(unique(data$type_batiment))),
+                     selected = "Tous"
+                   ),
+                   selectInput(
+                     inputId = "periode_construction_cout",
+                     label = "Période de construction :",
+                     choices = c("Tous", periodes),
+                     selected = "Tous"
+                   ),
+                   sliderInput(
+                     "filtre_cout_max",
+                     "Limiter le coût du chauffage :",
+                     min = 0,
+                     max = 10000,
+                     value = 10000
+                   ),
+                   hr(),
+                   uiOutput("kpi_moy"),
+                   uiOutput("kpi_med"),
+                   hr(),
+                   p("Cet histogramme montre la distribution du coût de chauffage (€ / an) pour le type d’énergie sélectionné (avec suppression des 5 % des valeurs les plus élevées).")
+                 ),
+                 mainPanel(
+                   plotOutput("graphique_histogramme", height = "550px"),
+                   downloadPlotUI("dl_histogramme"),
+                   downloadDataUI("dl_histogramme_data")
+                 )
+               )
+      ),
+      
+      # --- Onglet 4 : Nuage de points consommation vs émission ---
+      tabPanel("Conso vs Émission",
+               sidebarLayout(
+                 sidebarPanel(
+                   selectInput(
+                     "var_x",
+                     "Variable X :",
+                     choices = c(
+                       "Consommation (kWh/m²/an)" = "conso_5_usages_par_m2_ep",
+                       "Émissions CO2 (kgCO2/m²/an)" = "emission_ges_5_usages_par_m2",
+                       "Surface habitable" = "surface_habitable_logement"
+                     ),
+                     selected = "conso_5_usages_par_m2_ep"
+                   ),
+                   selectInput(
+                     "var_y",
+                     "Variable Y :",
+                     choices = c(
+                       "Émissions CO2 (kgCO2/m²/an)" = "emission_ges_5_usages_par_m2",
+                       "Consommation (kWh/m²/an)" = "conso_5_usages_par_m2_ep",
+                       "Surface habitable" = "surface_habitable_logement"
+                     ),
+                     selected = "emission_ges_5_usages_par_m2"
+                   ),
+                   hr(),
+                   selectInput(
+                     inputId = "energie_scatter",
+                     label = "Type d’énergie principale :",
+                     choices = sort(unique(data$type_energie_principale_chauffage)),
+                     selected = unique(data$type_energie_principale_chauffage)[1]
+                   ),
+                   selectInput(
+                     inputId = "type_batiment_scatter",
+                     label = "Type de bâtiment :",
+                     choices = c("Tous", sort(unique(data$type_batiment))),
+                     selected = "Tous"
+                   ),
+                   selectInput(
+                     inputId = "periode_construction_scatter",
+                     label = "Période de construction :",
+                     choices = c("Tous", periodes),
+                     selected = "Tous"
+                   ),
+                   hr(),
+                   uiOutput("kpi_corr"),
+                   hr(),
+                   p("Nuage de points : consommation d'énergie (kWh/m²/an) vs émissions de CO2 (kgCO2/m²/an) filtré par type d’énergie, type de bâtiment et période de construction.")
+                 ),
+                 mainPanel(
+                   plotOutput("graphique_scatter", height = "550px"),
+                   downloadPlotUI("dl_scatter"),
+                   downloadDataUI("dl_scatter_data")
+                 )
+               )
+      ),
+      
+      # --- Onglet 5 : Carte  ---
+      tabPanel(" Carte",
+        sidebarLayout(
+          sidebarPanel(
+            checkboxGroupInput(
+              inputId = "energie_carte",
+              label   = "Type d’énergie principale :",
+              choices = sort(unique(data$type_energie_principale_chauffage)),
+              selected = sort(unique(data$type_energie_principale_chauffage))
+            ),
+      
+            selectInput(
+              inputId = "cp_carte",
+              label   = "Code postal :",
+              choices = sort(unique(data_pts$code_postal_ban)),
+              selected = sort(unique(data_pts$code_postal_ban))[1]
+            )
+          ),
+      
+          mainPanel(
+            leafletOutput("map_rhone", height = "650px")
+          )
+        )
+      ),
+
+      
+      # --- Onglet 6 : A propos ---
+      tabPanel("A propos",
+               fluidPage(
+                 h3("À propos de cette application"),
+                 p("Cette application Shiny permet d’analyser les performances énergétiques (DPE) et les émissions de CO2 des logements selon le type d’énergie de chauffage."),
+                 p("Réalisée avec ", strong("R Shiny"), " et ", strong("ggplot2"), ".")
+               )
+      ),
+      
+      # --- Onglet 7 : Paramètres ---
+      tabPanel("Paramètres", 
+               fluidPage(
+                 h3("Paramètres"),
+                 actionButton("update_data_btn", "Actualiser les données", class = "btn btn-warning"),
+                 br(), br(),
+                 textOutput("update_loading", container = span),
+                 verbatimTextOutput("update_log")
+               )
+      )
+    )
+  })
+  
+  
+  #=============
+  #"VRAI" SERVER
+  #=============
   
   # --- Actualisation des données ---
   observeEvent(input$update_data_btn, {
@@ -649,17 +682,7 @@ server = function(input, output, session) {
   output$kpi_corr = renderUI({HTML(paste("Corrélation : <b>", correlation_scatter(), "</b>"))})
 
   # --- Carte ---
-  
-  make_pal = function(values) {
-    rng = range(values, na.rm = TRUE)
-    if (!is.finite(rng[1]) || rng[1] == rng[2]) rng = c(0, 1)
-    leaflet::colorNumeric(
-      palette  = c("#f7fbff", "#6baed6", "#2171b5", "#08306b"),
-      domain   = rng,
-      na.color = "#d9d9d9"
-    )
-  }
-  
+
   output$map_rhone = leaflet::renderLeaflet({
     m = leaflet::leaflet(options = leaflet::leafletOptions(zoomControl = TRUE))
     m = leaflet::addProviderTiles(m, providers$CartoDB.Positron)
@@ -667,108 +690,74 @@ server = function(input, output, session) {
     m
   })
   
-  observe({
-    mesure = input$mesure_carte  # "conso" ou "dpe"
-    df = data_pts
+  observeEvent({
+    input$map_rhone_bounds
+    input$energie_carte
+    input$cp_carte
+  },{
+    req(input$energie_carte, input$cp_carte)
     
-    if (identical(mesure, "conso")) {
-      tmp = df$conso_5_usages_par_m2_ep
-      if (is.factor(tmp)) tmp = as.character(tmp)
-      tmp = gsub(",", ".", tmp)
-      df$val = suppressWarnings(as.numeric(tmp))
-      titre_leg = "kWh/m²/an"
-      popup_label = "Conso"
-    } else {
-      df$val = suppressWarnings(as.numeric(df$dpe_num))
-      titre_leg = "DPE moyen (1=A…7=G)"
-      popup_label = "DPE"
-    }
+    df = data_pts %>%
+      mutate(energie_norm = tolower(trimws(type_energie_principale_chauffage))) %>%
+      filter(energie_norm %in% tolower(trimws(input$energie_carte))) %>%
+      filter(code_postal_ban == as.character(input$cp_carte))
     
-    if (identical(input$mode_carte, "cp")) {
-      agg_val = aggregate(val ~ code_postal_ban, data = df, FUN = function(x) mean(x, na.rm = TRUE))
-      agg_lonlat = aggregate(cbind(lon, lat) ~ code_postal_ban, data = df, FUN = function(x) mean(x, na.rm = TRUE))
-      df = merge(agg_val, agg_lonlat, by = "code_postal_ban", all = TRUE)
-      df$popup_cp = as.character(df$code_postal_ban)
-    } else {
-      df$popup_cp = as.character(df$code_postal_ban)
-    }
+    tmp = gsub(",", ".", df$conso_5_usages_par_m2_ep)
+    df$val = suppressWarnings(as.numeric(tmp))
     
-    pal = make_pal(df$val)
+    ok = is.finite(df$lon) & is.finite(df$lat) & is.finite(df$val)
+    df = df[ok,]
     
-    m = leaflet::leafletProxy("map_rhone")
-    m = leaflet::clearMarkers(m)
-    m = leaflet::clearControls(m)
+    seuil = quantile(df$val, 0.95, na.rm = TRUE)
+    df = df[df$val <= seuil,]
     
-    ok  = is.finite(df$lon) & is.finite(df$lat)
-    okv = ok & is.finite(df$val)
-    kov = ok & !is.finite(df$val)
+    pal = colorNumeric(
+      palette = c("#f7fbff", "#6baed6", "#2171b5", "#08306b"),
+      domain = df$val
+    )
     
-    if (any(okv)) {
-      if (identical(input$mode_carte, "points")) {
-        m = leaflet::addCircleMarkers(
-          map = m,
-          lng = df$lon[okv], lat = df$lat[okv],
-          radius = 2,
-          stroke = FALSE, fillOpacity = 0.8,
-          fillColor = pal(df$val[okv]),
-          popup = paste0("CP : ", df$popup_cp[okv],
-                         "<br>", popup_label, " : ", round(df$val[okv], 1)),
-          clusterOptions = leaflet::markerClusterOptions(
-            maxClusterRadius = 40,
-            spiderfyOnMaxZoom = TRUE,
-            zoomToBoundsOnClick = TRUE
-          )
-        )
-      } else {
-        m = leaflet::addCircleMarkers(
-          map = m,
-          lng = df$lon[okv], lat = df$lat[okv],
-          radius = 4,
-          stroke = FALSE, fillOpacity = 0.9,
-          fillColor = pal(df$val[okv]),
-          popup = paste0("CP : ", df$popup_cp[okv],
-                         "<br>", popup_label, " : ", round(df$val[okv], 1))
-        )
+    m = leafletProxy("map_rhone")
+    m %>% clearMarkers() %>% clearControls()
+    
+    cols = pal(df$val)
+    
+    m %>% addCircleMarkers(
+      lng=df$lon, lat=df$lat, radius=4,
+      fillColor=cols, fillOpacity=0.9, stroke=FALSE,
+      options=list(val=df$val, col=cols),
+      clusterOptions=markerClusterOptions(
+        spiderfyOnMaxZoom=TRUE, maxClusterRadius=40,
+        iconCreateFunction=JS("
+      function(c){
+        var m = c.getAllChildMarkers();
+        var vals = m.map(e => e.options.val);
+        var avg = vals.reduce((a,b)=>a+b,0) / vals.length;
+
+        var cols = m.map(e => e.options.col);
+        var col = cols[0];   // couleur du premier point (ou médiane possible)
+
+        return new L.DivIcon({
+          html:'<div style=\"background:'+col+';width:40px;height:40px;border-radius:50%;line-height:40px;color:#fff;font-weight:bold;text-align:center;\">'+c.getChildCount()+'</div>',
+          className:'cl', iconSize:[40,40]
+        });
       }
-    }
+    ")
+      ),
+      popup = paste0("<b>",df$type_energie_principale_chauffage,"</b>",
+                     "<br>CP : ",df$code_postal_ban,
+                     "<br>Conso : ",round(df$val,1)," kWh/m²/an")
+    )
     
-    if (any(kov)) {
-      if (identical(input$mode_carte, "points")) {
-        m = leaflet::addCircleMarkers(
-          map = m,
-          lng = df$lon[kov], lat = df$lat[kov],
-          radius = 2,
-          stroke = FALSE, fillOpacity = 0.6,
-          fillColor = "#d9d9d9",
-          popup = paste0("CP : ", df$popup_cp[kov], "<br>pas de donnée"),
-          clusterOptions = leaflet::markerClusterOptions(
-            maxClusterRadius = 40,
-            spiderfyOnMaxZoom = TRUE,
-            zoomToBoundsOnClick = TRUE
-          )
-        )
-      } else {
-        m = leaflet::addCircleMarkers(
-          map = m,
-          lng = df$lon[kov], lat = df$lat[kov],
-          radius = 4,
-          stroke = FALSE, fillOpacity = 0.6,
-          fillColor = "#d9d9d9",
-          popup = paste0("CP : ", df$popup_cp[kov], "<br>pas de donnée")
-        )
-      }
-    }
     
-    if (any(is.finite(df$val))) {
-      m = leaflet::addLegend(
-        map = m, position = "bottomright",
-        pal = pal, values = df$val[is.finite(df$val)],
-        opacity = 0.9, title = titre_leg,
-        labFormat = leaflet::labelFormat(digits = 1)
-      )
-    }
+    m %>% addLegend(
+      position = "bottomright",
+      pal = pal,
+      values = df$val,
+      title = "Consommation (kWh/m²/an)"
+    )
   })
-}
+}  
+
 
 # =========
 # LANCEMENT
