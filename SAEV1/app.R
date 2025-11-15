@@ -3,7 +3,7 @@
 # ========
 
 # --- Installation des packages ---
-packages = c("shiny", "ggplot2", "dplyr", "bslib", "sf", "leaflet", "jsonlite")
+packages = c("shiny", "ggplot2", "dplyr", "bslib", "sf", "leaflet", "jsonlite", "httr", "readr")
 to_install = setdiff(packages, rownames(installed.packages()))
 if (length(to_install)) install.packages(to_install, dependencies = TRUE)
 invisible(lapply(packages, require, character.only = TRUE))
@@ -16,44 +16,46 @@ library(bslib)
 library(sf)
 library(leaflet)
 library(jsonlite)
+library(httr)
+library(readr)
 
 # =======
 # MODULES
 # =======
 
 # --- Téléchargement PNG ---
-downloadPlotUI <- function(id, label = "Télécharger en PNG") {
-  ns <- NS(id)
+downloadPlotUI = function(id, label = "Télécharger en PNG") {
+  ns = NS(id)
   div(style="display:flex;justify-content:flex-end;margin-top:8px;",
       downloadButton(ns("download"), label, class="btn btn-primary"))
 }
 
-downloadPlotServer <- function(id, plot_expr, filename="graph.png", width=1200, height=900, dpi=120) {
+downloadPlotServer = function(id, plot_expr, filename="graph.png", width=1200, height=900, dpi=120) {
   moduleServer(id, function(input, output, session) {
-    output$download <- downloadHandler(
+    output$download = downloadHandler(
       filename = function() filename,
       content  = function(file) {
-        p <- plot_expr(); if (is.null(p)) return()
+        p = plot_expr(); if (is.null(p)) return()
         ggplot2::ggsave(filename=file, plot=p, device="png", width=width/dpi, height=height/dpi, dpi=dpi, units="in")
       })
   })
 }
 
 # --- Export CSV ---
-downloadDataUI <- function(id, label = "Exporter en CSV") {
-  ns <- NS(id)
+downloadDataUI = function(id, label = "Exporter en CSV") {
+  ns = NS(id)
   div(style = "display:flex; justify-content:flex-end; margin-top:6px;",
       downloadButton(ns("download"), label, class = "btn btn-secondary"))
 }
 
-downloadDataServer <- function(id, data_expr, filename = "data.csv") {
+downloadDataServer = function(id, data_expr, filename = "data.csv") {
   moduleServer(id, function(input, output, session) {
-    output$download <- downloadHandler(
+    output$download = downloadHandler(
       filename = function() filename,
       content = function(file) {
-        df <- data_expr()
+        df = data_expr()
         if (is.null(df)) return()
-        if (!is.data.frame(df)) df <- as.data.frame(df)
+        if (!is.data.frame(df)) df = as.data.frame(df)
         write.csv(df, file, row.names = FALSE)
       })
   })
@@ -118,8 +120,8 @@ if (nrow(data_pts) > 0) {
 }
 
 # Initialise ordre d'apparition des périodes
-periodes <- sort(unique(data$periode_construction))
-periodes <- c(periodes[grepl("^avant", periodes, ignore.case = TRUE)],
+periodes = sort(unique(data$periode_construction))
+periodes = c(periodes[grepl("^avant", periodes, ignore.case = TRUE)],
               periodes[!grepl("^avant", periodes, ignore.case = TRUE)])
 
 
@@ -337,13 +339,15 @@ ui = navbarPage(
   ),
   
   # --- Onglet 7 : Paramètres ---
-  tabPanel("Paramètres",
+  tabPanel("Paramètres", 
            fluidPage(
              h3("Paramètres"),
-             p("Cette page sera utilisée pour configurer l'application.")
+             actionButton("update_data_btn", "Actualiser les données", class = "btn btn-warning"),
+             br(), br(),
+             textOutput("update_loading", container = span),
+             verbatimTextOutput("update_log")
            )
   )
-  
 )
 
 # ======
@@ -351,6 +355,69 @@ ui = navbarPage(
 # ======
 
 server = function(input, output, session) {
+  
+  # --- Actualisation des données ---
+  observeEvent(input$update_data_btn, {
+    output$update_log = renderText(paste("Chargement..."))
+    
+    csv_url = "https://raw.githubusercontent.com/bymatzo/SAE-R/refs/heads/main/data/data.csv"
+    old_data = read.csv(csv_url, colClasses = "character")
+    old_data$date_etablissement_dpe = as.Date(old_data$date_etablissement_dpe)
+    
+    cp_list = unique(old_data$code_postal_ban)
+    max_date = max(old_data$date_etablissement_dpe, na.rm = TRUE)
+    
+    base_url = "https://data.ademe.fr/data-fair/api/v1/datasets/dpe03existant/lines"
+    new_data = data.frame()
+    
+    select_fields = paste(
+      "type_energie_principale_chauffage,etiquette_dpe,cout_chauffage,periode_construction",
+      "surface_habitable_logement,type_batiment,date_etablissement_dpe,conso_5_usages_ep",
+      "conso_5_usages_par_m2_ep,emission_ges_5_usages_par_m2,code_postal_ban",
+      "coordonnee_cartographique_x_ban,coordonnee_cartographique_y_ban",
+      sep = ","
+    )
+    
+    for (cp in cp_list) {
+      params = list(
+        page = 1,
+        size = 10000,
+        select = select_fields,
+        qs = paste0("code_postal_ban:", cp, " AND date_etablissement_dpe:[", max_date, " TO ", Sys.Date(), "]")
+      )
+      
+      url_encoded = httr::modify_url(base_url, query = params)
+      response = httr::GET(url_encoded)
+      
+      if (status_code(response) == 200) {
+        content = jsonlite::fromJSON(rawToChar(response$content))
+        if (!is.null(content$result)) {
+          temp = as.data.frame(content$result)
+          new_data = dplyr::bind_rows(new_data, temp)
+        }
+      }
+    }
+    
+    if (nrow(new_data) == 0) {
+      output$update_loading <- renderText("")
+      output$update_log <- renderText("Aucune nouvelle donnée trouvée.")
+      return()
+    }
+    
+    new_data$date_etablissement_dpe = as.Date(new_data$date_etablissement_dpe)
+    
+    if ("_score" %in% colnames(new_data)) {
+      colnames(new_data)[colnames(new_data) == "_score"] <- "X_score"
+    }
+    
+    merged = rbind(old_data, new_data)
+    merged = merged[!duplicated(merged), ]
+    data <<- merged
+
+    output$update_loading <- renderText("")
+    output$update_log <- renderText(paste("Actualisation terminée ! Nouvelles lignes ajoutées :", nrow(new_data)))
+  })
+  
   
   # ---Fonctions de filtrage ---
   filter_data = function(df, energie_sel, batiment_sel, periode_sel) {
@@ -367,18 +434,18 @@ server = function(input, output, session) {
   }
   
   # --- Graphique 1 : Barplot répartition DPE ---
-  plot_dpe <- reactive({
-    df_filtre <- filter_data(data, input$energie, input$type_batiment, input$periode_construction) %>%
+  plot_dpe = reactive({
+    df_filtre = filter_data(data, input$energie, input$type_batiment, input$periode_construction) %>%
       filter(etiquette_dpe %in% input$dpe_filtre) %>% 
       count(etiquette_dpe) %>%
       mutate(proportion = n / sum(n) * 100)
     
-    df_filtre$etiquette_dpe <- factor(
+    df_filtre$etiquette_dpe = factor(
       df_filtre$etiquette_dpe,
       levels = c("A","B","C","D","E","F","G")
     )
     
-    p <- ggplot(df_filtre, aes(x = etiquette_dpe, y = proportion, fill = etiquette_dpe)) +
+    p = ggplot(df_filtre, aes(x = etiquette_dpe, y = proportion, fill = etiquette_dpe)) +
       geom_col(width = 0.7, color = "white", linewidth = 0.5) +
       geom_text(aes(label = paste0(round(proportion, 1), "%")),
                 vjust = -0.5, size = 5, color = "black", fontface = "bold") +
@@ -405,43 +472,31 @@ server = function(input, output, session) {
     return(p)
   })
   
-  output$graphique_dpe <- renderPlot(plot_dpe())
+  output$graphique_dpe = renderPlot(plot_dpe())
   downloadPlotServer("dl_dpe", plot_expr = plot_dpe, filename = "dpe.png")
   downloadDataServer("dl_dpe_data",
                      data_expr = function() {
-                       df <- filter_data(data, input$energie, input$type_batiment, input$periode_construction)
-                       df <- df[df$etiquette_dpe %in% input$dpe_filtre, ]
+                       df = filter_data(data, input$energie, input$type_batiment, input$periode_construction)
+                       df = df[df$etiquette_dpe %in% input$dpe_filtre, ]
                        df[, c("type_energie_principale_chauffage", "type_batiment","periode_construction", "etiquette_dpe")]
                      },filename = "dpe_data.csv")
   
   # --- Graphique 2 : Boxplot emission CO2 ---
-  moyenne_co2 <- reactiveVal(NA)
-  mediane_co2 <- reactiveVal(NA)
+  moyenne_co2 = reactiveVal(NA)
+  mediane_co2 = reactiveVal(NA)
   
-  plot_boxplot <- reactive({
+  plot_boxplot = reactive({
     df_filtre = filter_data_boxplot(data, input$type_batiment_boxplot, input$periode_construction_boxplot)
-    
-    y = df_filtre$emission_ges_5_usages_par_m2
-    if (is.factor(y)) y = as.character(y)
-    y = suppressWarnings(as.numeric(gsub(",", ".", y)))
-    
-    ok = is.finite(y)
-    df_filtre = df_filtre[ok, , drop = FALSE]
-    y = y[ok]
-    
-    moyenne_co2(round(mean(y), 1))
-    mediane_co2(round(median(y), 1))
-    
-    ggplot(df_filtre, aes(x = type_energie_principale_chauffage, 
-                          y = emission_ges_5_usages_par_m2,
-                          fill = type_energie_principale_chauffage)) +
+    df_filtre$emission_num = suppressWarnings(as.numeric(gsub(",", ".", df_filtre$emission_ges_5_usages_par_m2)))
+    df_filtre = df_filtre[is.finite(df_filtre$emission_num), ]
+    moyenne_co2(round(mean(df_filtre$emission_num), 1))
+    mediane_co2(round(median(df_filtre$emission_num), 1))
+    ggplot(df_filtre, aes(x = type_energie_principale_chauffage, y = emission_num, fill = type_energie_principale_chauffage)) +
       geom_boxplot(outlier.colour = "red", alpha = 0.7) +
-      ylim(0, 130) + 
-      labs(
-        title = "Distribution des émissions de CO2 par type d’énergie principale",
-        x = "Type d’énergie principale de chauffage",
-        y = "Émissions de CO2 (kgCO2/m²/an)"
-      ) +
+      ylim(0, 130) +
+      labs(title = "Distribution des émissions de CO2 par type d’énergie principale",
+           x = "Type d’énergie principale de chauffage",
+           y = "Émissions de CO2 (kgCO2/m²/an)") +
       theme_minimal() +
       theme(
         plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
@@ -452,24 +507,24 @@ server = function(input, output, session) {
       )
   })
   
-  output$graphique_boxplot <- renderPlot(plot_boxplot())
+  output$graphique_boxplot = renderPlot(plot_boxplot())
   downloadPlotServer("dl_boxplot", plot_expr = plot_boxplot, filename = "boxplot_co2.png")
   downloadDataServer("dl_boxplot_data",
                      data_expr = function() {
-                       df <- filter_data_boxplot(data, input$type_batiment_boxplot, input$periode_construction_boxplot)
-                       df$emission_num <- suppressWarnings(as.numeric(gsub(",", ".", df$emission_ges_5_usages_par_m2)))
-                       df <- df[is.finite(df$emission_num), ]
+                       df = filter_data_boxplot(data, input$type_batiment_boxplot, input$periode_construction_boxplot)
+                       df$emission_num = suppressWarnings(as.numeric(gsub(",", ".", df$emission_ges_5_usages_par_m2)))
+                       df = df[is.finite(df$emission_num), ]
                        df[, c("type_energie_principale_chauffage", "emission_num","type_batiment", "periode_construction")]
                      },filename = "co2_data.csv")
   
-  output$kpi_moy_co2 <- renderUI({HTML(paste("Moyenne : <b>", moyenne_co2(), " kgCO2/m²/an</b>"))})
-  output$kpi_med_co2 <- renderUI({HTML(paste("Médiane : <b>", mediane_co2(), " kgCO2/m²/an</b>"))})
+  output$kpi_moy_co2 = renderUI({HTML(paste("Moyenne : <b>", moyenne_co2(), " kgCO2/m²/an</b>"))})
+  output$kpi_med_co2 = renderUI({HTML(paste("Médiane : <b>", mediane_co2(), " kgCO2/m²/an</b>"))})
   
   # --- Graphique 3 : Histogramme coût du chauffage ---
-  moyenne_cout <- reactiveVal(NA)
-  mediane_cout <- reactiveVal(NA)
+  moyenne_cout = reactiveVal(NA)
+  mediane_cout = reactiveVal(NA)
   
-  plot_histogramme <- reactive({
+  plot_histogramme = reactive({
     df_filtre = filter_data(
       data,
       input$energie_cout,
@@ -487,7 +542,7 @@ server = function(input, output, session) {
     x = x[ok]
     
     if (!is.null(input$filtre_cout_max))
-      x <- x[x <= input$filtre_cout_max]
+      x = x[x <= input$filtre_cout_max]
     
     seuil_95 = quantile(x, 0.95, na.rm = TRUE)
     x2 = x[x <= seuil_95]
@@ -502,28 +557,35 @@ server = function(input, output, session) {
       labs(title = paste("Répartition du coût de chauffage pour", input$energie_cout),
            x = "Coût du chauffage (€ / an)",
            y = "Nombre de logements") +
-      theme_minimal()
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+        axis.text.x = element_text(family = "Poppins", color = "black", angle = 30, hjust = 1, size = 11),
+        axis.title = element_text(size = 14, face = "bold"),
+        legend.position = "none",
+        panel.grid.major.x = element_blank()
+      )
   })
   
-  output$graphique_histogramme <- renderPlot(plot_histogramme())
+  output$graphique_histogramme = renderPlot(plot_histogramme())
   downloadPlotServer("dl_histogramme", plot_expr = plot_histogramme, filename = "histogramme_cout.png")
   downloadDataServer("dl_histogramme_data",
                      data_expr = function() {
-                       df <- filter_data(data, input$energie_cout, input$type_batiment_cout, input$periode_construction_cout)
-                       df$cout_num <- suppressWarnings(as.numeric(gsub(",", ".", df$cout_chauffage)))
-                       df <- df[is.finite(df$cout_num) & df$cout_num <= input$filtre_cout_max, ]
-                       seuil <- quantile(df$cout_num, 0.95, na.rm = TRUE)
-                       df <- df[df$cout_num <= seuil, ]
+                       df = filter_data(data, input$energie_cout, input$type_batiment_cout, input$periode_construction_cout)
+                       df$cout_num = suppressWarnings(as.numeric(gsub(",", ".", df$cout_chauffage)))
+                       df = df[is.finite(df$cout_num) & df$cout_num <= input$filtre_cout_max, ]
+                       seuil = quantile(df$cout_num, 0.95, na.rm = TRUE)
+                       df = df[df$cout_num <= seuil, ]
                        df[, c("type_energie_principale_chauffage", "type_batiment", "periode_construction", "cout_num")]
                       },filename = "cout_chauffage_data.csv")
   
-  output$kpi_moy <- renderUI({HTML(paste("Moyenne : <b>", moyenne_cout(), "€</b>"))})
-  output$kpi_med <- renderUI({HTML(paste("Médiane : <b>", mediane_cout(), "€</b>"))})
+  output$kpi_moy = renderUI({HTML(paste("Moyenne : <b>", moyenne_cout(), "€</b>"))})
+  output$kpi_med = renderUI({HTML(paste("Médiane : <b>", mediane_cout(), "€</b>"))})
   
   # --- Graphique 4 : Nuage de points consommation vs émission ---
-  correlation_scatter <- reactiveVal(NA)
+  correlation_scatter = reactiveVal(NA)
   
-  plot_scatter <- reactive({
+  plot_scatter = reactive({
     df_filtre = filter_data(
       data,
       input$energie_scatter,
@@ -547,7 +609,7 @@ server = function(input, output, session) {
     
     # calcul corrélation
     correlation_scatter(round(cor(cx2, cy2), 3))
-    df_plot <- data.frame(x = cx2,y = cy2)
+    df_plot = data.frame(x = cx2,y = cy2)
     
     ggplot(df_plot, aes(x = x, y = y)) +
       geom_point(color = "#E74C3C", alpha = 0.7) +
@@ -557,23 +619,30 @@ server = function(input, output, session) {
         x = input$var_x,
         y = input$var_y
       ) +
-      theme_minimal()
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+        axis.text.x = element_text(family = "Poppins", color = "black", angle = 30, hjust = 1, size = 11),
+        axis.title = element_text(size = 14, face = "bold"),
+        legend.position = "none",
+        panel.grid.major.x = element_blank()
+      )
   })
   
   
-  output$graphique_scatter <- renderPlot(plot_scatter())
+  output$graphique_scatter = renderPlot(plot_scatter())
   downloadPlotServer("dl_scatter", plot_expr = plot_scatter, filename = "scatter_conso_co2.png")
   downloadDataServer("dl_scatter_data",
                      data_expr = function() {
-                       df <- filter_data(data, input$energie_scatter, input$type_batiment_scatter, input$periode_construction_scatter)
-                       df$x <- suppressWarnings(as.numeric(gsub(",", ".", df[[input$var_x]])))
-                       df$y <- suppressWarnings(as.numeric(gsub(",", ".", df[[input$var_y]])))
-                       df <- df[is.finite(df$x) & is.finite(df$y), ]
-                       seuil_x <- quantile(df$x, 0.95, na.rm = TRUE)
-                       seuil_y <- quantile(df$y, 0.95, na.rm = TRUE)
-                       df <- df[df$x <= seuil_x & df$y <= seuil_y, ]
-                       df[[input$var_x]] <- df$x
-                       df[[input$var_y]] <- df$y
+                       df = filter_data(data, input$energie_scatter, input$type_batiment_scatter, input$periode_construction_scatter)
+                       df$x = suppressWarnings(as.numeric(gsub(",", ".", df[[input$var_x]])))
+                       df$y = suppressWarnings(as.numeric(gsub(",", ".", df[[input$var_y]])))
+                       df = df[is.finite(df$x) & is.finite(df$y), ]
+                       seuil_x = quantile(df$x, 0.95, na.rm = TRUE)
+                       seuil_y = quantile(df$y, 0.95, na.rm = TRUE)
+                       df = df[df$x <= seuil_x & df$y <= seuil_y, ]
+                       df[[input$var_x]] = df$x
+                       df[[input$var_y]] = df$y
                        df[, c("type_energie_principale_chauffage","type_batiment","periode_construction", input$var_x, input$var_y)]
                      }, filename = "scatter_data.csv")
   
