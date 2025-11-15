@@ -139,11 +139,7 @@ user_base <- data.frame(
 
 ui = fluidPage(
   useShinyjs(),
-  theme = bs_theme(
-    version = 5,
-    bootswatch = "minty",
-    base_font = font_google("Poppins")
-  ),
+  theme = bs_theme(version = 5, bootswatch = "minty"),
   shinyauthr::loginUI("login"),
   uiOutput("appUI")
 )
@@ -372,18 +368,17 @@ server = function(input, output, session) {
       ),
       
       # --- Onglet 7 : Paramètres ---
-      tabPanel("Paramètres", 
+      tabPanel("Paramètres",
                fluidPage(
                  h3("Paramètres"),
-                 actionButton("update_data_btn", "Actualiser les données", class = "btn btn-warning"),
-                 br(), br(),
-                 textOutput("update_loading", container = span),
+                 actionButton("update_data_btn","Actualiser les données",class="btn btn-warning"),
+                 br(),br(),
+                 textOutput("update_loading",container=span),
                  verbatimTextOutput("update_log")
                )
       )
     )
   })
-  
   
   #=============
   #"VRAI" SERVER
@@ -717,7 +712,7 @@ server = function(input, output, session) {
     )
     
     m = leafletProxy("map_rhone")
-    m %>% clearMarkers() %>% clearControls()
+    m %>% clearGroup("pts") %>% clearControls()
     
     cols = pal(df$val)
     
@@ -725,17 +720,14 @@ server = function(input, output, session) {
       lng=df$lon, lat=df$lat, radius=4,
       fillColor=cols, fillOpacity=0.9, stroke=FALSE,
       options=list(val=df$val, col=cols),
+      group="pts",
       clusterOptions=markerClusterOptions(
         spiderfyOnMaxZoom=TRUE, maxClusterRadius=40,
         iconCreateFunction=JS("
       function(c){
         var m = c.getAllChildMarkers();
-        var vals = m.map(e => e.options.val);
-        var avg = vals.reduce((a,b)=>a+b,0) / vals.length;
-
         var cols = m.map(e => e.options.col);
-        var col = cols[0];   // couleur du premier point (ou médiane possible)
-
+        var col = cols[0];
         return new L.DivIcon({
           html:'<div style=\"background:'+col+';width:40px;height:40px;border-radius:50%;line-height:40px;color:#fff;font-weight:bold;text-align:center;\">'+c.getChildCount()+'</div>',
           className:'cl', iconSize:[40,40]
@@ -743,18 +735,18 @@ server = function(input, output, session) {
       }
     ")
       ),
-      popup = paste0("<b>",df$type_energie_principale_chauffage,"</b>",
-                     "<br>CP : ",df$code_postal_ban,
-                     "<br>Conso : ",round(df$val,1)," kWh/m²/an")
+      popup=paste0("<b>",df$type_energie_principale_chauffage,"</b>",
+                   "<br>CP : ",df$code_postal_ban,
+                   "<br>Conso : ",round(df$val,1)," kWh/m²/an")
     )
-    
     
     m %>% addLegend(
-      position = "bottomright",
-      pal = pal,
-      values = df$val,
-      title = "Consommation (kWh/m²/an)"
+      position="bottomright",
+      pal=pal,
+      values=df$val,
+      title="Consommation (kWh/m²/an)"
     )
+    
   })
 }  
 
