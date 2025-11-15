@@ -13,13 +13,13 @@ library(sf)
 library(leaflet)
 library(jsonlite)
 
-# --- Chargement des données ---
+# --- Chargement et préparation des données ---
 data = read.csv(
   "https://raw.githubusercontent.com/bymatzo/SAE-R/refs/heads/main/data/data.csv",
   sep = ",", dec = "."
 )
 
-# petite fonction pour convertir proprement en numérique
+# Convertit des colonnes en numérique
 to_num = function(v) {
   if (is.factor(v)) v = as.character(v)
   v = gsub(",", ".", v)
@@ -30,15 +30,14 @@ to_num = function(v) {
 x_raw = to_num(data$coordonnee_cartographique_x_ban)
 y_raw = to_num(data$coordonnee_cartographique_y_ban)
 
-# lignes valides
+# Filtrage des lignes valides
 ok0 = is.finite(x_raw) & is.finite(y_raw)
 data_pts = data[ok0, , drop = FALSE]
 
+# Convertit les coordonnées en degrés (WGS84) si elles sont en Lambert 93
 if (nrow(data_pts) > 0) {
-  # si ce ne sont pas des degrés, on reprojette 2154 -> 4326
   lon_like = all(abs(x_raw[ok0]) <= 180, na.rm = TRUE)
   lat_like = all(abs(y_raw[ok0]) <= 90,  na.rm = TRUE)
-  
   if (lon_like && lat_like) {
     data_pts$lon = x_raw[ok0]
     data_pts$lat = y_raw[ok0]
@@ -54,11 +53,11 @@ if (nrow(data_pts) > 0) {
   }
 }
 
-# DPE lettres -> chiffres (A=1 ... G=7)
+# Convertit lettres DPE en chiffres (A=1 ... G=7)
 niv = c("A","B","C","D","E","F","G")
 data_pts$dpe_num = match(data_pts$etiquette_dpe, niv)
 
-# centre initial de la vue
+# Initialisation du centre de la vue
 if (nrow(data_pts) > 0) {
   lng0 = mean(data_pts$lon, na.rm = TRUE)
   lat0 = mean(data_pts$lat, na.rm = TRUE)
@@ -102,6 +101,12 @@ ui = navbarPage(
                  choices = c("Tous", sort(unique(data$periode_construction))),
                  selected = "Tous"
                ),
+               checkboxGroupInput(
+                 inputId = "dpe_filtre",
+                 label = "Étiquettes DPE à afficher :",
+                 choices = c("A","B","C","D","E","F","G"),
+                 selected = c("A","B","C","D","E","F","G")
+               ),
                hr(),
                p("Ce graphique affiche la répartition en pourcentage des classes DPE pour le type d’énergie sélectionné.")
              ),
@@ -126,7 +131,10 @@ ui = navbarPage(
                  label = "Période de construction :",
                  choices = c("Tous", sort(unique(data$periode_construction))),
                  selected = "Tous"
-               )
+               ),
+               hr(),
+               uiOutput("kpi_moy_co2"),
+               uiOutput("kpi_med_co2"),
              ),
              mainPanel(
                plotOutput("graphique_boxplot", height = "550px")
@@ -156,6 +164,16 @@ ui = navbarPage(
                  choices = c("Tous", sort(unique(data$periode_construction))),
                  selected = "Tous"
                ),
+               sliderInput(
+                 "filtre_cout_max",
+                 "Limiter le coût du chauffage :",
+                 min = 0,
+                 max = 10000,
+                 value = 10000
+               ),
+               hr(),
+               uiOutput("kpi_moy"),
+               uiOutput("kpi_med"),
                hr(),
                p("Cet histogramme montre la distribution du coût de chauffage (€ / an) pour le type d’énergie sélectionné (avec suppression des 5 % des valeurs les plus élevées).")
              ),
@@ -187,6 +205,8 @@ ui = navbarPage(
                  choices = c("Tous", sort(unique(data$periode_construction))),
                  selected = "Tous"
                ),
+               hr(),
+               uiOutput("kpi_corr"),
                hr(),
                p("Nuage de points : consommation d'énergie (kWh/m²/an) vs émissions de CO₂ (kgCO₂/m²/an) filtré par type d’énergie, type de bâtiment et période de construction.")
              ),
@@ -254,6 +274,7 @@ server = function(input, output, session) {
   # ---------- Graphique 1 ----------
   output$graphique_dpe = renderPlot({
     df_filtre = filter_data(data, input$energie, input$type_batiment, input$periode_construction) %>%
+      filter(etiquette_dpe %in% input$dpe_filtre) %>% 
       count(etiquette_dpe) %>%
       mutate(proportion = n / sum(n) * 100)
     
@@ -286,8 +307,21 @@ server = function(input, output, session) {
   })
   
   # ---------- Graphique 2 ----------
+  moyenne_co2 <- reactiveVal(NA)
+  mediane_co2 <- reactiveVal(NA)
   output$graphique_boxplot = renderPlot({
     df_filtre = filter_data_boxplot(data, input$type_batiment_boxplot, input$periode_construction_boxplot)
+    
+    y = df_filtre$emission_ges_5_usages_par_m2
+    if (is.factor(y)) y = as.character(y)
+    y = suppressWarnings(as.numeric(gsub(",", ".", y)))
+    
+    ok = is.finite(y)
+    df_filtre = df_filtre[ok, , drop = FALSE]
+    y = y[ok]
+    
+    moyenne_co2(round(mean(y), 1))
+    mediane_co2(round(median(y), 1))
     
     ggplot(df_filtre, aes(x = type_energie_principale_chauffage, 
                           y = emission_ges_5_usages_par_m2,
@@ -297,7 +331,7 @@ server = function(input, output, session) {
       labs(
         title = "Distribution des émissions de CO2 par type d’énergie principale",
         x = "Type d’énergie principale de chauffage",
-        y = "Émissions de CO₂ (kgCO₂/m²/an)"
+        y = "Émissions de CO2 (kgCO2/m²/an)"
       ) +
       theme_minimal() +
       theme(
@@ -309,7 +343,18 @@ server = function(input, output, session) {
       )
   })
   
+  output$kpi_moy_co2 <- renderUI({
+    HTML(paste("Moyenne : <b>", moyenne_co2(), " kgCO₂/m²/an</b>"))
+  })
+  
+  output$kpi_med_co2 <- renderUI({
+    HTML(paste("Médiane : <b>", mediane_co2(), " kgCO₂/m²/an</b>"))
+  })
+  
+  
   # ---------- Graphique 3 : Coût du chauffage ----------
+  moyenne_cout <- reactiveVal(NA)
+  mediane_cout <- reactiveVal(NA)
   output$graphique_histogramme = renderPlot({
     # filtre sur les choix utilisateur
     df_filtre = filter_data(
@@ -333,9 +378,15 @@ server = function(input, output, session) {
     if (length(x) == 0) {
       plot.new()
       text(0.5, 0.5,
-           paste("Aucune donnée disponible pour", input$energie_cout),
+           paste("Aucune donnée disponible pour ces filtres."),
            cex = 1.2)
       return()
+    }
+    
+    if (!is.null(input$filtre_cout_max)) {
+      ok_slider = x <= input$filtre_cout_max
+      df_filtre = df_filtre[ok_slider, , drop = FALSE]
+      x = x[ok_slider]
     }
     
     # seuil 95 %
@@ -344,6 +395,8 @@ server = function(input, output, session) {
     
     df_filtre2 = df_filtre[ok2, , drop = FALSE]
     x2 = x[ok2]
+    moyenne_cout(round(mean(x2), 1))
+    mediane_cout(round(median(x2), 1))
     
     if (length(x2) == 0) {
       plot.new()
@@ -371,7 +424,15 @@ server = function(input, output, session) {
       )
   })
   
+  output$kpi_moy <- renderUI({
+    HTML(paste("Moyenne : <b>", moyenne_cout(), "€</b>"))
+  })
+  
+  output$kpi_med <- renderUI({
+    HTML(paste("Médiane : <b>", mediane_cout(), "€</b>"))
+  })
   # ---------- Graphique 4 : Conso vs Émission ----------
+  correlation_scatter <- reactiveVal(NA)
   output$graphique_scatter = renderPlot({
     df_filtre = filter_data(
       data,
@@ -398,7 +459,7 @@ server = function(input, output, session) {
     if (length(cx) == 0) {
       plot.new()
       text(0.5, 0.5,
-           paste("Aucune donnée disponible pour", input$energie_scatter),
+           paste("Aucune donnée disponible pour ces filtres."),
            cex = 1.2)
       return()
     }
@@ -422,22 +483,33 @@ server = function(input, output, session) {
     }
     
     df_filtre2$conso_num = cx2
-    df_filtre2$ges_num   = cy2
-    
+    df_filtre2$ges_num = cy2
+    correlation_scatter(round(cor(df_filtre2$conso_num, df_filtre2$ges_num), 3))
+    correlation = correlation_scatter()
     ggplot(df_filtre2, aes(x = conso_num, y = ges_num)) +
-      geom_point(color = "#E74C3C", alpha = 0.7) +
-      labs(
-        title = paste("Consommation vs Émissions pour", input$energie_scatter,
-                      "(5 % valeurs extrêmes supprimées)"),
-        x = "Consommation d'énergie (kWh/m²/an)",
-        y = "Émissions de CO₂ (kgCO₂/m²/an)"
-      ) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
-        axis.title = element_text(size = 14, face = "bold"),
-        axis.text = element_text(size = 12)
-      )
+    geom_point(aes(color = "Points"), alpha = 0.7) +
+    geom_smooth(aes(color = "Régression"), method = "lm", se = FALSE) +
+    scale_color_manual(
+      name = NULL,
+      values = c("Points" = "#E74C3C", "Régression" = "blue")
+    ) +
+    labs(
+      title = paste("Consommation vs Émissions pour", input$energie_scatter,
+                    "(5 % valeurs extrêmes supprimées)"),
+      x = "Consommation d'énergie (kWh/m²/an)",
+      y = "Émissions de CO2 (kgCO2/m²/an)"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 14, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "right"
+    )
+  })
+  
+  output$kpi_corr <- renderUI({
+    HTML(paste("Corrélation : <b>", correlation_scatter(), "</b>"))
   })
   
   # ---------- Carte : Leaflet ----------
